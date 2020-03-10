@@ -163,7 +163,7 @@ def test_cleaner():
 def test_empty_string_prefix():
     environ["_VALUE"] = "underscored"
     load_from_env(
-        identifier="env_global", key=None, env="", obj=settings, silent=True
+        identifier="env_global", key=None, prefix="", obj=settings, silent=True
     )
     assert settings.VALUE == "underscored"
 
@@ -171,7 +171,11 @@ def test_empty_string_prefix():
 def test_no_prefix():
     environ["VALUE"] = "no_prefix"
     load_from_env(
-        identifier="env_global", key=None, env=False, obj=settings, silent=True
+        identifier="env_global",
+        key=None,
+        prefix=False,
+        obj=settings,
+        silent=True,
     )
     assert settings.VALUE == "no_prefix"
 
@@ -181,7 +185,7 @@ def test_none_as_string_prefix():
     load_from_env(
         identifier="env_global",
         key=None,
-        env="none",
+        prefix="none",
         obj=settings,
         silent=True,
     )
@@ -218,7 +222,7 @@ def test_load_dunder(clean_env):
     load_from_env(
         identifier="env_global",
         key=None,
-        env="dynaconf",
+        prefix="dynaconf",
         obj=settings,
         silent=True,
     )
@@ -230,7 +234,7 @@ def test_load_dunder(clean_env):
     load_from_env(
         identifier="env_global",
         key=None,
-        env="dynaconf",
+        prefix="dynaconf",
         obj=settings,
         silent=True,
     )
@@ -242,7 +246,7 @@ def test_load_dunder(clean_env):
     load_from_env(
         identifier="env_global",
         key=None,
-        env="dynaconf",
+        prefix="dynaconf",
         obj=settings,
         silent=True,
     )
@@ -269,7 +273,7 @@ def test_load_dunder(clean_env):
     load_from_env(
         identifier="env_global",
         key=None,
-        env="dynaconf",
+        prefix="dynaconf",
         obj=settings,
         silent=True,
     )
@@ -281,7 +285,7 @@ def test_load_dunder(clean_env):
     load_from_env(
         identifier="env_global",
         key=None,
-        env="dynaconf",
+        prefix="dynaconf",
         obj=settings,
         silent=True,
     )
@@ -293,7 +297,7 @@ def test_load_dunder(clean_env):
     load_from_env(
         identifier="env_global",
         key=None,
-        env="dynaconf",
+        prefix="dynaconf",
         obj=settings,
         silent=True,
     )
@@ -305,7 +309,7 @@ def test_load_dunder(clean_env):
     load_from_env(
         identifier="env_global",
         key=None,
-        env="dynaconf",
+        prefix="dynaconf",
         obj=settings,
         silent=True,
     )
@@ -318,7 +322,7 @@ def test_load_dunder(clean_env):
     load_from_env(
         identifier="env_global",
         key=None,
-        env="dynaconf",
+        prefix="dynaconf",
         obj=settings,
         silent=True,
     )
@@ -331,7 +335,7 @@ def test_load_dunder(clean_env):
     load_from_env(
         identifier="env_global",
         key=None,
-        env="dynaconf",
+        prefix="dynaconf",
         obj=settings,
         silent=True,
     )
@@ -344,7 +348,7 @@ def test_load_dunder(clean_env):
     load_from_env(
         identifier="env_global",
         key=None,
-        env="dynaconf",
+        prefix="dynaconf",
         obj=settings,
         silent=True,
     )
@@ -356,7 +360,7 @@ def test_load_dunder(clean_env):
     load_from_env(
         identifier="env_global",
         key=None,
-        env="dynaconf",
+        prefix="dynaconf",
         obj=settings,
         silent=True,
     )
@@ -368,7 +372,7 @@ def test_load_dunder(clean_env):
     load_from_env(
         identifier="env_global",
         key=None,
-        env="dynaconf",
+        prefix="dynaconf",
         obj=settings,
         silent=True,
     )
@@ -380,7 +384,7 @@ def test_load_dunder(clean_env):
     load_from_env(
         identifier="env_global",
         key=None,
-        env="dynaconf",
+        prefix="dynaconf",
         obj=settings,
         silent=True,
     )
@@ -392,7 +396,7 @@ def test_load_dunder(clean_env):
     load_from_env(
         identifier="env_global",
         key=None,
-        env="dynaconf",
+        prefix="dynaconf",
         obj=settings,
         silent=True,
     )
@@ -404,7 +408,7 @@ def test_load_dunder(clean_env):
     load_from_env(
         identifier="env_global",
         key=None,
-        env="dynaconf",
+        prefix="dynaconf",
         obj=settings,
         silent=True,
     )

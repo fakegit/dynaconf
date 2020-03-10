@@ -12,19 +12,27 @@ def load(obj, env=None, silent=True, key=None):
 
     `DYNACONF_` (default global) or `$(ENVVAR_PREFIX_FOR_DYNACONF)_`
     """
-    global_env = obj.get("ENVVAR_PREFIX_FOR_DYNACONF")
-    if global_env is False or global_env.upper() != "DYNACONF":
-        load_from_env(IDENTIFIER + "_global", key, "DYNACONF", obj, silent)
+    global_prefix = obj.get("ENVVAR_PREFIX_FOR_DYNACONF")
+    if global_prefix is False or global_prefix.upper() != "DYNACONF":
+        load_from_env(obj, "DYNACONF", key, silent, IDENTIFIER + "_global")
 
     # Load the global env if exists and overwrite everything
-    load_from_env(IDENTIFIER + "_global", key, global_env, obj, silent)
+    load_from_env(obj, global_prefix, key, silent, IDENTIFIER + "_global")
 
 
-def load_from_env(identifier, key, env, obj, silent):
+def load_from_env(
+    obj,
+    prefix=False,
+    key=None,
+    silent=False,
+    identifier=IDENTIFIER,
+    env=False,  # backwards compatibility bc renamed param
+):
+    prefix = prefix or env  # backwards compatibility bc renamed param
     env_ = ""
-    if env is not False:
-        env = env.upper()
-        env_ = "{0}_".format(env)
+    if prefix is not False:
+        prefix = prefix.upper()
+        env_ = "{0}_".format(prefix)
     try:
         if key:
             value = environ.get("{0}{1}".format(env_, key))
@@ -34,7 +42,7 @@ def load_from_env(identifier, key, env, obj, silent):
                     key,
                     value,
                     identifier,
-                    env,
+                    prefix,
                 )
                 obj.set(key, value, loader_identifier=identifier, tomlfy=True)
         else:
@@ -46,11 +54,12 @@ def load_from_env(identifier, key, env, obj, silent):
             }
             if data:
                 obj.logger.debug(
-                    "env_loader: loading: %s (%s:%s)", data, identifier, env
+                    "env_loader: loading: %s (%s:%s)", data, identifier, prefix
                 )
                 obj.update(data, loader_identifier=identifier)
     # box.exceptions.BoxKeyError
     except Exception as e:  # pragma: no cover
+        raise e
         e.message = ("env_loader: Error ({0})").format(str(e))
         if silent:
             obj.logger.error(str(e))
