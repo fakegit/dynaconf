@@ -1,22 +1,35 @@
-import io
+from __future__ import annotations
+
 import json
 import os
+import sys
 from collections import namedtuple
+from pathlib import Path
+from textwrap import dedent
 
 import pytest
 
+from dynaconf import add_converter
 from dynaconf import default_settings
+from dynaconf import Dynaconf
+from dynaconf import DynaconfFormatError
+from dynaconf import DynaconfParseError
 from dynaconf.loaders.json_loader import DynaconfEncoder
+from dynaconf.utils import build_env_list
 from dynaconf.utils import ensure_a_list
+from dynaconf.utils import ensure_upperfied_list
 from dynaconf.utils import extract_json_objects
+from dynaconf.utils import find_the_correct_casing
 from dynaconf.utils import isnamedtupleinstance
 from dynaconf.utils import Missing
 from dynaconf.utils import missing
 from dynaconf.utils import object_merge
+from dynaconf.utils import prepare_json
 from dynaconf.utils import trimmed_split
 from dynaconf.utils import upperfy
 from dynaconf.utils.files import find_file
 from dynaconf.utils.files import get_local_filename
+from dynaconf.utils.parse_conf import boolean_fix
 from dynaconf.utils.parse_conf import evaluate_lazy_format
 from dynaconf.utils.parse_conf import Formatters
 from dynaconf.utils.parse_conf import Lazy
@@ -53,7 +66,7 @@ def test_unparse():
 
 
 def test_cast_bool(settings):
-    """Covers https://github.com/rochacbruno/dynaconf/issues/14"""
+    """Covers https://github.com/dynaconf/dynaconf/issues/14"""
     assert parse_conf_data(False, box_settings=settings) is False
     assert settings.get("SIMPLE_BOOL", cast="@bool") is False
 
@@ -91,7 +104,7 @@ def test_find_file(tmpdir):
 
     # now place a .env file a few levels up and make sure it's found
     filename = os.path.join(str(child4), ".env")
-    with io.open(
+    with open(
         filename, "w", encoding=default_settings.ENCODING_FOR_DYNACONF
     ) as f:
         f.write("TEST=test\n")
@@ -104,6 +117,116 @@ def test_find_file(tmpdir):
     ) == os.path.join(str(tmpdir), ".env")
 
 
+def test_casting_str(settings):
+    res = parse_conf_data("@str 7")
+    assert isinstance(res, str) and res == "7"
+
+    settings.set("value", 7)
+    res = parse_conf_data("@str @jinja {{ this.value }}")(settings)
+    assert isinstance(res, str) and res == "7"
+
+    res = parse_conf_data("@str @format {this.value}")(settings)
+    assert isinstance(res, str) and res == "7"
+
+
+def test_string_starting_with_converter_prefix_is_not_cast(settings):
+    """A plain string that merely shares a prefix with a converter token
+    (e.g. ``@interface`` starts with ``@int``) must be kept verbatim, not
+    treated as a cast. Previously this raised ``KeyError``.
+    """
+    # these all start with a real converter token as a *prefix* only
+    for value in (
+        "@interface",  # @int
+        "@integer",  # @int
+        "@formatter",  # @format
+        "@gettext",  # @get
+        "@uppercase",  # @upper
+        "@stringify",  # @str
+        "@noneofthat",  # @none
+    ):
+        assert parse_conf_data(value, box_settings=settings) == value
+        assert (
+            parse_conf_data(value, tomlfy=True, box_settings=settings) == value
+        )
+
+    # a prefix collision followed by more words must also pass through
+    assert (
+        parse_conf_data("@formatter blah", tomlfy=True, box_settings=settings)
+        == "@formatter blah"
+    )
+
+    # real converter tokens must still cast (regression guard)
+    assert parse_conf_data("@int 5", box_settings=settings) == 5
+    assert parse_conf_data("@none", box_settings=settings) is None
+    settings.set("value", 5)
+    assert parse_conf_data("@int @format {this.value}")(settings) == 5
+
+
+def test_casting_int(settings):
+    res = parse_conf_data("@int 2")
+    assert isinstance(res, int) and res == 2
+
+    settings.set("value", 2)
+    res = parse_conf_data("@int @jinja {{ this.value }}")(settings)
+    assert isinstance(res, int) and res == 2
+
+    res = parse_conf_data("@int @format {this.value}")(settings)
+    assert isinstance(res, int) and res == 2
+
+
+def test_casting_float(settings):
+    res = parse_conf_data("@float 0.3")
+    assert isinstance(res, float) and abs(res - 0.3) < 1e-6
+
+    settings.set("value", 0.3)
+    res = parse_conf_data("@float @jinja {{ this.value }}")(settings)
+    assert isinstance(res, float) and abs(res - 0.3) < 1e-6
+
+    res = parse_conf_data("@float @format {this.value}")(settings)
+    assert isinstance(res, float) and abs(res - 0.3) < 1e-6
+
+
+def test_casting_bool(settings):
+    res = parse_conf_data("@bool true")
+    assert isinstance(res, bool) and res is True
+
+    settings.set("value", "true")
+    res = parse_conf_data("@bool @jinja {{ this.value }}")(settings)
+    assert isinstance(res, bool) and res is True
+
+    settings.set("value", "false")
+    res = parse_conf_data("@bool @format {this.value}")(settings)
+    assert isinstance(res, bool) and res is False
+
+
+def test_casting_json(settings):
+    res = parse_conf_data("""@json {"FOO": "bar"}""")
+    assert isinstance(res, dict)
+    assert "FOO" in res and "bar" in res.values()
+
+    # Test how single quotes cases are handled.
+    # When jinja uses `attr` to render a json string,
+    # it may convert double quotes to single quotes.
+    settings.set("value", "{'FOO': 'bar'}")
+    res = parse_conf_data("@json @jinja {{ this.value }}")(settings)
+    assert isinstance(res, dict)
+    assert "FOO" in res and "bar" in res.values()
+
+    res = parse_conf_data("@json @format {this.value}")(settings)
+    assert isinstance(res, dict)
+    assert "FOO" in res and "bar" in res.values()
+
+    # Test jinja rendering a dict
+    settings.set("value", "OPTION1")
+    settings.set("OPTION1", {"bar": 1})
+    settings.set("OPTION2", {"bar": 2})
+    res = parse_conf_data("@jinja {{ this|attr(this.value) }}")(settings)
+    assert isinstance(res, str)
+    res = parse_conf_data("@json @jinja {{ this|attr(this.value) }}")(settings)
+    assert isinstance(res, dict)
+    assert "bar" in res and res["bar"] == 1
+
+
 def test_disable_cast(monkeypatch):
     # this casts for int
     assert parse_conf_data("@int 42", box_settings={}) == 42
@@ -111,6 +234,13 @@ def test_disable_cast(monkeypatch):
     with monkeypatch.context() as m:
         m.setenv("AUTO_CAST_FOR_DYNACONF", "off")
         assert parse_conf_data("@int 42", box_settings={}) == "@int 42"
+
+
+def test_disable_cast_on_instance():
+    settings = Dynaconf(auto_cast=False, environments=True)
+    assert settings.auto_cast_for_dynaconf is False
+    settings.set("SIMPLE_INT", "@int 42")
+    assert settings.get("SIMPLE_INT") == "@int 42"
 
 
 def test_tomlfy(settings):
@@ -138,7 +268,7 @@ def test_tomlfy(settings):
 
 
 @pytest.mark.parametrize("test_input", ["something=42"])
-def test_tomlfy_unparseable(test_input, settings):
+def test_tomlfy_unparsable(test_input, settings):
     assert (
         parse_conf_data(test_input, tomlfy=True, box_settings=settings)
         == test_input
@@ -146,12 +276,11 @@ def test_tomlfy_unparseable(test_input, settings):
 
 
 def test_missing_sentinel():
-
     # The missing singleton should always compare truthfully to itself
     assert missing == missing
 
     # new instances of Missing should be equal to each other due to
-    # explicit __eq__ implmentation check for isinstance.
+    # explicit __eq__ implementation check for isinstance.
     assert missing == Missing()
 
     # The sentinel should not be equal to None, True, or False
@@ -159,7 +288,8 @@ def test_missing_sentinel():
     assert missing is not True
     assert missing is not False
 
-    # But the explict typecasting of missing to a bool should evaluate to False
+    # But the explicit typecasting of missing to a bool should evaluate to
+    # False
     assert bool(missing) is False
 
     assert str(missing) == "<dynaconf.missing>"
@@ -169,7 +299,6 @@ def test_meta_values(settings):
     reset = parse_conf_data(
         "@reset [1, 2]", tomlfy=True, box_settings=settings
     )
-    # @reset is DEPRECATED in v3.0.0 but kept for backwards compatibility
     assert reset.value == [1, 2]
     assert reset._dynaconf_reset is True
     assert "Reset([1, 2])" in repr(reset)
@@ -210,6 +339,37 @@ def test_merge_existing_dict():
     assert new == {"host": "localhost", "port": 666, "user": "admin"}
 
 
+def test_merge_dict_preserves_old_key_order():
+    # When merging old into new (which contains only a subset of old's keys),
+    # the resulting dict must retain old's key order.  Previously, keys that
+    # existed in new were kept at the front while old-only keys were appended,
+    # causing sibling keys to be reordered.  See #1183.
+    old = {"a": 1, "b": 2, "c": 3}
+    new = {"b": 99}  # only the middle key is updated
+    object_merge(old, new)
+    assert list(new.keys()) == ["a", "b", "c"]
+    assert new == {"a": 1, "b": 99, "c": 3}
+
+    # Keys genuinely new to `new` (not in old) are placed at the end.
+    old2 = {"x": 10, "y": 20}
+    new2 = {"z": 30, "x": 99}
+    object_merge(old2, new2)
+    assert list(new2.keys()) == ["x", "y", "z"]
+    assert new2 == {"x": 99, "y": 20, "z": 30}
+
+
+def test_find_the_correct_casing_skips_non_str_keys():
+    assert find_the_correct_casing("timeout", (1, 2, "TIMEOUT")) == "TIMEOUT"
+    assert find_the_correct_casing("timeout", (1, 2)) is None
+
+
+def test_merge_existing_dict_with_non_str_keys():
+    existing = {1: "fast", 2: "slow", "TIMEOUT": 30}
+    new = {"timeout": 60}
+    object_merge(existing, new)
+    assert new == {1: "fast", 2: "slow", "TIMEOUT": 60}
+
+
 def test_merge_dict_with_meta_values(settings):
     existing = {"A": 1, "B": 2, "C": 3}
     new = {
@@ -218,6 +378,84 @@ def test_merge_dict_with_meta_values(settings):
     }
     object_merge(existing, new)
     assert new == {"A": 1, "C": 4}
+
+
+def test_merge_list_token_when_key_absent_in_old():
+    # A list carrying the `dynaconf_merge` marker must not crash when the key
+    # holding it is absent from the existing data (there is nothing to merge
+    # into).  The marker is consumed and the provided list is kept as-is.
+    old = {"existing": 1}
+    new = {"ports": [8080, "dynaconf_merge"]}
+    object_merge(old, new)
+    assert new == {"existing": 1, "ports": [8080]}
+
+    # Same for the `dynaconf_merge_unique` marker.
+    old = {"existing": 1}
+    new = {"ports": [8080, "dynaconf_merge_unique"]}
+    object_merge(old, new)
+    assert new == {"existing": 1, "ports": [8080]}
+
+
+@pytest.mark.parametrize(
+    "old, new, expected",
+    [
+        pytest.param(
+            {},
+            {"a": {"nested": {"dynaconf_merge": True, "y": 2}}},
+            {"a": {"nested": {"y": 2}}},
+            id="absent_key_level_1",
+        ),
+        pytest.param(
+            {"a": {"other": 1}},
+            {"a": {"b": {"c": {"dynaconf_merge": True, "y": 2}}}},
+            {"a": {"other": 1, "b": {"c": {"y": 2}}}},
+            id="absent_key_level_2",
+        ),
+        pytest.param(
+            {"m": {"other": 1}},
+            {"a": {"b": {"c": {"dynaconf_merge": True, "y": 2}}}},
+            {"a": {"b": {"c": {"y": 2}}}, "m": {"other": 1}},
+            id="absent_key_level_2_different_root",
+        ),
+        pytest.param(
+            {"a": {"other": 1, "b": {}}},
+            {"a": {"b": {"c": {"dynaconf_merge": True, "y": 2}}}},
+            {"a": {"other": 1, "b": {"c": {"y": 2}}}},
+            id="absent_key_level_2_with_existing_empty_parent",
+        ),
+        pytest.param(
+            {"a": {"other": 1, "b": {"b_child": 3}}},
+            {"a": {"b": {"c": {"dynaconf_merge": True, "y": 2}}}},
+            {"a": {"other": 1, "b": {"c": {"y": 2}, "b_child": 3}}},
+            id="absent_key_level_2_with_existing_nonempty_parent",
+        ),
+        pytest.param(
+            {"a": {"other": 1, "b": {"c": {}}}},
+            {"a": {"b": {"c": {"dynaconf_merge": True, "y": 2}}}},
+            {"a": {"other": 1, "b": {"c": {"y": 2}}}},
+            id="absent_key_level_2_with_existing_empty_sibling",
+        ),
+        pytest.param(
+            {"a": {"other": 1, "b": {"c": {"z": 3}}}},
+            {"a": {"b": {"c": {"dynaconf_merge": True, "y": 2}}}},
+            {"a": {"other": 1, "b": {"c": {"y": 2, "z": 3}}}},
+            id="absent_key_level_2_with_existing_nonempty_sibling",
+        ),
+        pytest.param(
+            {"a": {"other": 1, "b": {"c": {"z": 3}}}},
+            {"a": {"b": {"c": {"dynaconf_merge": False, "y": 2}}}},
+            {"a": {"other": 1, "b": {"c": {"y": 2}}}},
+            id="absent_key_level_2_with_existing_nonempty_sibling_merge_false",
+        ),
+    ],
+)
+def test_nested_merge_token_is_cleaned_up_when_key_absent_in_old(
+    old, new, expected
+):
+    """See #1210. Merge token nested below an absent key must be stripped
+    so it doesn't leak into the final settings."""
+    object_merge(old, new)
+    assert new == expected
 
 
 def test_trimmed_split():
@@ -254,7 +492,6 @@ def test_trimmed_split():
 
 
 def test_ensure_a_list():
-
     # No data is empty list
     assert ensure_a_list(None) == []
 
@@ -263,13 +500,17 @@ def test_ensure_a_list():
     assert ensure_a_list((1, 2)) == [1, 2]
     assert ensure_a_list({1, 2}) == [1, 2]
 
-    # A string is trimmed_splitted
+    # A string is trimmed_split
     assert ensure_a_list("ab.toml") == ["ab.toml"]
     assert ensure_a_list("ab.toml,cd.toml") == ["ab.toml", "cd.toml"]
     assert ensure_a_list("ab.toml;cd.toml") == ["ab.toml", "cd.toml"]
 
     # other types get wrapped in a list
     assert ensure_a_list(1) == [1]
+
+
+def test_ensure_upperfied_list():
+    assert ensure_upperfied_list([1, "a", "A__b"]) == [1, "A", "A__b"]
 
 
 def test_get_local_filename():
@@ -289,72 +530,104 @@ def test_upperfy():
     assert upperfy("foo_BAR") == "FOO_BAR"
 
 
-def test_lazy_format_class():
-    value = Lazy("{this[FOO]}/bar")
-    settings = {"FOO": "foo"}
-    assert value(settings) == "foo/bar"
-    assert str(value) == value.value
-    assert repr(value) == f"'@{value.formatter} {value.value}'"
+class TestLazyInternal:
+    def test_format_class(self):
+        value = Lazy("{this[FOO]}/bar")
+        settings = {"FOO": "foo"}
+        assert value(settings) == "foo/bar"
+        assert str(value) == value.value
+        assert repr(value) == f"'@{value.formatter} {value.value}'"
+
+    def test_format_class_jinja(self):
+        value = Lazy(
+            "{{this['FOO']}}/bar", formatter=Formatters.jinja_formatter
+        )
+        settings = {"FOO": "foo"}
+        assert value(settings) == "foo/bar"
+
+    def test_custom_function_formatter(self):
+        def custom_formatter(value, **context):
+            return f"custom:{value}"
+
+        lazy_val = Lazy("test", formatter=custom_formatter)
+        assert lazy_val({}) == "custom:test"
+
+    def test_json_serializable(self):
+        value = Lazy("{this[FOO]}/bar")
+        assert (
+            json.dumps({"val": value}, cls=DynaconfEncoder)
+            == '{"val": "@format {this[FOO]}/bar"}'
+        )
 
 
-def test_evaluate_lazy_format_decorator(settings):
-    class Settings:
-        FOO = "foo"
+class TestLazyDecorator:
+    def _make_settings(self, template):
+        class Settings:
+            FOO = "foo"
+            AUTO_CAST_FOR_DYNACONF = True
 
-        @evaluate_lazy_format
-        def get(self):
-            return parse_conf_data("@format {this.FOO}/bar", box_settings=self)
+            @evaluate_lazy_format
+            def get(self, key, default=None):
+                if key.endswith("_FOR_DYNACONF"):
+                    return getattr(self, key)
+                return parse_conf_data(template, box_settings=self)
 
-    settings = Settings()
-    assert settings.get() == "foo/bar"
+            def __contains__(self, key):
+                value = getattr(self, key, missing)
+                if value is missing:
+                    return False
+                return True
 
+        return Settings()
 
-def test_lazy_format_on_settings(settings):
-    os.environ["ENV_THING"] = "LazyFormat"
-    settings.set("set_1", "really")
-    settings.set("lazy", "@format {env[ENV_THING]}/{this[set_1]}/{this.SET_2}")
-    settings.set("set_2", "works")
+    def test_format(self):
+        settings = self._make_settings("@format {this.FOO}/bar")
+        assert settings.get("foo") == "foo/bar"
 
-    assert settings.LAZY == settings.get("lazy") == "LazyFormat/really/works"
-
-
-def test_lazy_format_class_jinja():
-    value = Lazy("{{this['FOO']}}/bar", formatter=Formatters.jinja_formatter)
-    settings = {"FOO": "foo"}
-    assert value(settings) == "foo/bar"
-
-
-def test_evaluate_lazy_format_decorator_jinja(settings):
-    class Settings:
-        FOO = "foo"
-
-        @evaluate_lazy_format
-        def get(self):
-            return parse_conf_data(
-                "@jinja {{this.FOO}}/bar", box_settings=settings
-            )
-
-    settings = Settings()
-    assert settings.get() == "foo/bar"
+    def test_jinja(self):
+        settings = self._make_settings("@jinja {{this.FOO}}/bar")
+        assert settings.get("foo") == "foo/bar"
 
 
-def test_lazy_format_on_settings_jinja(settings):
-    os.environ["ENV_THING"] = "LazyFormat"
-    settings.set("set_1", "really")
-    settings.set(
-        "lazy", "@jinja {{env.ENV_THING}}/{{this['set_1']}}/{{this.SET_2}}"
-    )
-    settings.set("set_2", "works")
+class TestLazyUsage:
+    @pytest.fixture(params=[True, False], ids=["dynaboxify", "no_dynaboxify"])
+    def settings(self, request):
+        return Dynaconf(dynaboxify=request.param)
 
-    assert settings.LAZY == settings.get("lazy") == "LazyFormat/really/works"
+    def test_format(self, settings):
+        os.environ["ENV_THING"] = "LazyFormat"
+        settings.set("set_1", "really")
+        settings.set(
+            "lazy", "@format {env[ENV_THING]}/{this[set_1]}/{this.SET_2}"
+        )
+        settings.set("set_2", "works")
 
+        assert (
+            settings.LAZY == settings.get("lazy") == "LazyFormat/really/works"
+        )
 
-def test_lazy_format_is_json_serializable():
-    value = Lazy("{this[FOO]}/bar")
-    assert (
-        json.dumps({"val": value}, cls=DynaconfEncoder)
-        == '{"val": "@format {this[FOO]}/bar"}'
-    )
+    def test_format_nested_dict(self, settings):
+        settings.set("BASE_VALUE", "hello")
+        settings.set("NESTED", {"inner": "@format {this[BASE_VALUE]}/world"})
+        assert settings.get("NESTED")["inner"] == "hello/world"
+
+    def test_jinja(self, settings):
+        os.environ["ENV_THING"] = "LazyFormat"
+        settings.set("set_1", "really")
+        settings.set(
+            "lazy",
+            "@jinja {{env.ENV_THING}}/{{this['set_1']}}/{{this.SET_2}}",
+        )
+        settings.set("set_2", "works")
+
+        assert (
+            settings.LAZY == settings.get("lazy") == "LazyFormat/really/works"
+        )
+
+    def test_jinja_nested_dict(self, settings):
+        settings.set("BASE_VALUE", "hello")
+        settings.set("NESTED", {"inner": "@jinja {{this.BASE_VALUE}}/world"})
+        assert settings.get("NESTED")["inner"] == "hello/world"
 
 
 def test_try_to_encode():
@@ -372,4 +645,913 @@ def test_extract_json():
     assert list(extract_json_objects("foo bar")) == []
     assert list(extract_json_objects('foo bar {"a": 1}')) == [{"a": 1}]
     assert list(extract_json_objects("foo bar {'a': 2{")) == []
-    assert list(extract_json_objects('{{{"x": {}}}}')) == [{"x": {}}]
+    assert list(extract_json_objects('{{{"x": {}}}}}')) == [{"x": {}}]
+
+
+def test_env_list():
+    class Obj(dict):
+        @property
+        def current_env(self):
+            return "other"
+
+    assert build_env_list(Obj(), env="OTHER") == [
+        "default",
+        "dynaconf",
+        "other",
+        "global",
+    ]
+
+
+def create_file(filename: str, data: str) -> str:
+    with open(filename, "w", encoding="utf-8") as f:
+        f.write(dedent(data))
+    return filename
+
+
+@pytest.mark.skipif(
+    sys.platform.startswith("win"),
+    reason="Doesn't work on windows due to backslash decoding errors",
+)
+def test_add_converter_path_example(tmp_path):
+    """Assert add_converter Path example works"""
+    add_converter("path", Path)
+    fn = create_file(
+        tmp_path / "settings.yaml",
+        f"""\
+        my_path: "@path {Path.home()}"
+        """,
+    )
+    settings = Dynaconf(settings_file=fn)
+    assert isinstance(settings.my_path, Path)
+
+
+def test_boolean_fix():
+    """Assert boolean fix works"""
+    assert boolean_fix("True") == "true"
+    assert boolean_fix("False") == "false"
+    assert boolean_fix("NotOnlyTrue") == "NotOnlyTrue"
+    assert boolean_fix("TrueNotOnly") == "TrueNotOnly"
+    assert boolean_fix("FalseNotOnly") == "FalseNotOnly"
+    assert boolean_fix("NotOnlyFalse") == "NotOnlyFalse"
+
+
+def test_get_converter(settings):
+    """Ensure the work of @get converter"""
+    settings.set("FOO", 12)
+    settings.set("BAR", "@get FOO")
+    assert settings.BAR == settings.FOO == 12
+
+    settings.set("ZAZ", "@get RAZ @float 42")
+    assert settings.ZAZ == 42.0
+
+    settings.set("ZAZ", "@get RAZ 34 @float")
+    assert settings.ZAZ == 34.0
+
+    settings.set("STRINGFLOAT", "23.2")
+    settings.set("ZAZ", "@get STRINGFLOAT @float")
+    assert settings.ZAZ == 23.2
+
+
+def test_get_converter_with_1_levels(settings):
+    """Ensure the work of @get converter on nested data"""
+    settings.set("NAME", "Wilsom")
+    settings.set("OTHERNAME", "@get name")
+    assert settings.othername == "Wilsom"
+
+
+def test_get_converter_with_2_levels():
+    settings = Dynaconf()
+    """Ensure the work of @get converter on nested data"""
+    settings.set("RESTFRAMEWORK", {"AUTHENTICATION_CLASSES": ["A", "B"]})
+    assert settings.RESTFRAMEWORK
+
+    # pulp ansible
+    settings.set("MYCLASSES", "@get RESTFRAMEWORK.AUTHENTICATION_CLASSES")
+    assert settings.MYCLASSES[0] == "A"
+
+
+def test_get_converter_with_3_levels(settings):
+    """Ensure the work of @get converter on nested data"""
+    settings.set("FOO__BAR__ZAZ", 12)
+    settings.set("BAR", "@get FOO.BAR.ZAZ")
+    assert settings.FOO.BAR.ZAZ == 12
+    assert settings.BAR == 12
+
+
+def test_get_converter_error_when_converting(settings):
+    """Malformed declaration errors"""
+    settings.set("BLA", "@get")
+
+    with pytest.raises(DynaconfFormatError):
+        settings.BLA
+
+
+def test_get_converter_error_when_not_found(settings):
+    """Malformed declaration errors"""
+    settings.set("BLA", "@get BATATA123")
+
+    with pytest.raises(DynaconfParseError):
+        settings.BLA
+
+
+def test_get_converter_quoted_default_multiword(settings):
+    """Test @get converter with quoted multi-word defaults"""
+    settings.set("KEY", '@get MISSING "default value here"')
+    assert settings.KEY == "default value here"
+
+
+def test_get_converter_quoted_default_single(settings):
+    """Test @get converter with quoted single-word defaults"""
+    settings.set("KEY", '@get MISSING "default"')
+    assert settings.KEY == "default"
+
+
+def test_get_converter_single_quoted(settings):
+    """Test @get converter with single-quoted defaults"""
+    settings.set("KEY", "@get MISSING 'default value'")
+    assert settings.KEY == "default value"
+
+
+def test_get_converter_empty_string_default(settings):
+    """Test @get converter with empty string default"""
+    settings.set("KEY", '@get MISSING ""')
+    assert settings.KEY == ""
+
+
+def test_get_converter_default_special_chars(settings):
+    """Test @get converter with special characters in default"""
+    settings.set("URL", '@get MISSING "http://example.com"')
+    assert settings.URL == "http://example.com"
+
+
+def test_get_converter_quoted_with_cast(settings):
+    """Test @get converter with quoted default and cast"""
+    settings.set("NUM", '@get MISSING @int "42"')
+    assert settings.NUM == 42
+
+    settings.set("NUM2", '@get MISSING "42" @int')
+    assert settings.NUM2 == 42
+
+
+def test_get_converter_whitespace_variations(settings):
+    """Test @get converter with extra whitespace"""
+    settings.set("FOO", "42")
+    settings.set("KEY", "@get  FOO  @int   42")
+    assert settings.KEY == 42
+
+
+def test_get_converter_unclosed_quote_error(settings):
+    """Test @get converter with unclosed quote raises error"""
+    settings.set("KEY", '@get MISSING "unclosed')
+    with pytest.raises(DynaconfFormatError, match="Unclosed quote"):
+        settings.KEY
+
+
+@pytest.mark.parametrize(
+    "input_expected",
+    [
+        ({"path": Path("foo")}, {"path": "foo"}),
+        ({1: Path("foo")}, {"1": "foo"}),
+        ({True: Path("foo")}, {"True": "foo"}),
+        ([Path("one"), Path("two"), 1, True], ["one", "two", 1, True]),
+        (1, 1),
+        (True, True),
+        ("test", "test"),
+    ],
+)
+def test_prepare_json(input_expected):
+    data, expected = input_expected
+    assert prepare_json(data) == expected
+
+
+@pytest.mark.skipif(
+    sys.platform.startswith("win"),
+    reason="Doesn't work on windows due to backslash decoding errors",
+)
+def test_read_file_converter(tmp_path):
+    """Assert read_file converter works"""
+    # 1. Create a temp file with FOOBAR as content
+    filename = tmp_path / "SECRET_KEY"
+    create_file(filename, "FOOBAR")
+    # 2. Create a settings file with the read_file converter
+    settings_file = tmp_path / "settings.toml"
+    create_file(
+        settings_file,
+        f"""\
+        SECRET_KEY = "@read_file {filename}"
+        """,
+    )
+    # 3. Load the settings
+    settings = Dynaconf(
+        settings_file=settings_file,
+    )
+    # 4. Assert the SECRET_KEY is the content of the file
+    assert settings.SECRET_KEY == "FOOBAR"
+
+
+@pytest.mark.skipif(
+    sys.platform.startswith("win"),
+    reason="Doesn't work on windows due to backslash decoding errors",
+)
+def test_read_file_notfound_error(tmp_path):
+    """Assert read_file converter raises error on invalid file"""
+    # 1. Create a settings file with the read_file converter
+    settings_file = tmp_path / "settings.toml"
+    create_file(
+        settings_file,
+        f"""\
+        SECRET_KEY = "@read_file {tmp_path}/non_existent_file"
+        """,
+    )
+    # 2. Load the settings
+    with pytest.raises(FileNotFoundError):
+        settings = Dynaconf(
+            settings_file=settings_file,
+        )
+        settings.SECRET_KEY
+
+
+@pytest.mark.skipif(
+    sys.platform.startswith("win"),
+    reason="Doesn't work on windows due to backslash decoding errors",
+)
+def test_read_file_notfound_error_with_default(tmp_path):
+    """Assert read_file converter uses default on invalid file"""
+    # 1. Create a settings file with the read_file converter
+    settings_file = tmp_path / "settings.toml"
+    create_file(
+        settings_file,
+        f"""\
+        SECRET_KEY = "@read_file {tmp_path}/non_existent_file DEFAULT_VALUE"
+        """,
+    )
+    # 2. Load the settings
+    settings = Dynaconf(
+        settings_file=settings_file,
+    )
+    assert settings.SECRET_KEY == "DEFAULT_VALUE"
+
+
+@pytest.mark.skipif(
+    sys.platform.startswith("win"),
+    reason="Doesn't work on windows due to backslash decoding errors",
+)
+def test_read_file_syntax_error(tmp_path):
+    """Assert read_file converter raises error on invalid syntax"""
+    # 1. Create a settings file with the read_file converter
+    settings_file = tmp_path / "settings.toml"
+    create_file(
+        settings_file,
+        """\
+        SECRET_KEY = "@read_file "
+        """,
+    )
+    # 2. Load the settings
+    with pytest.raises(DynaconfFormatError):
+        settings = Dynaconf(
+            settings_file=settings_file,
+        )
+        settings.SECRET_KEY
+
+
+@pytest.mark.skipif(
+    sys.platform.startswith("win"),
+    reason="Doesn't work on windows due to backslash decoding errors",
+)
+def test_read_file_with_format(tmp_path):
+    """Assert read_file converter works with format"""
+    # 1. Create a temp file with FOOBAR as content
+    filename = tmp_path / "SECRET_KEY"
+    create_file(filename, "BATATA")
+    # 2. Create a settings file with the read_file converter
+    settings_file = tmp_path / "settings.toml"
+    create_file(
+        settings_file,
+        f"""\
+        FILENAME = "{filename}"
+        SECRET_KEY = "@read_file @format {{this.FILENAME}}"
+        """,
+    )
+    # 3. Load the settings
+    settings = Dynaconf(
+        settings_file=settings_file,
+    )
+    # 4. Assert the SECRET_KEY is the content of the file
+    assert settings.SECRET_KEY == "BATATA"
+
+
+@pytest.mark.skipif(
+    sys.platform.startswith("win"),
+    reason="Doesn't work on windows due to backslash decoding errors",
+)
+def test_read_file_with_jinja(tmp_path):
+    """Assert read_file converter works with format"""
+    # 1. Create a temp file with FOOBAR as content
+    filename = tmp_path / "SECRET_KEY"
+    create_file(filename, "POTATO")
+    # 2. Create a settings file with the read_file converter
+    settings_file = tmp_path / "settings.toml"
+    create_file(
+        settings_file,
+        f"""\
+        FILENAME = "{filename}"
+        SECRET_KEY = "@read_file @jinja {{{{this.FILENAME}}}}"
+        """,
+    )
+    # 3. Load the settings
+    settings = Dynaconf(
+        settings_file=settings_file,
+    )
+    # 4. Assert the SECRET_KEY is the content of the file
+    assert settings.SECRET_KEY == "POTATO"
+
+
+@pytest.mark.skipif(
+    sys.platform.startswith("win"),
+    reason="Doesn't work on windows due to backslash decoding errors",
+)
+def test_read_file_with_get(tmp_path):
+    """Assert read_file converter works with format"""
+    # 1. Create a temp file with FOOBAR as content
+    filename = tmp_path / "SECRET_KEY"
+    create_file(filename, "POMME")
+    # 2. Create a settings file with the read_file converter
+    settings_file = tmp_path / "settings.toml"
+    create_file(
+        settings_file,
+        f"""\
+        SECRET_FILENAME = "{filename}"
+        SECRET_KEY = "@read_file @get SECRET_FILENAME"
+        """,
+    )
+    # 3. Load the settings
+    settings = Dynaconf(
+        settings_file=settings_file,
+    )
+    # 4. Assert the SECRET_KEY is the content of the file
+    assert settings.SECRET_KEY == "POMME"
+
+
+@pytest.mark.skipif(
+    sys.platform.startswith("win"),
+    reason="Doesn't work on windows due to backslash decoding errors",
+)
+def test_read_file_converter_with_strip(tmp_path):
+    """Assert read_file converter works"""
+    # 1. Create a temp file with FOOBAR as content
+    filename = tmp_path / "SECRET_KEY"
+    create_file(filename, "FOOBAR \n")
+    # 2. Create a settings file with the read_file converter
+    settings_file = tmp_path / "settings.toml"
+    create_file(
+        settings_file,
+        f"""\
+        SECRET_KEY = "@strip @read_file {filename}"
+        """,
+    )
+    # 3. Load the settings
+    settings = Dynaconf(
+        settings_file=settings_file,
+    )
+    # 4. Assert the SECRET_KEY is the content of the file
+    assert settings.SECRET_KEY == "FOOBAR"
+
+
+@pytest.mark.skipif(
+    sys.platform.startswith("win"),
+    reason="Doesn't work on windows due to backslash decoding errors",
+)
+def test_read_file_empty_file(tmp_path):
+    """Test reading an empty file returns empty string"""
+    filename = tmp_path / "empty.txt"
+    filename.touch()  # Create empty file
+    settings_file = tmp_path / "settings.toml"
+    create_file(
+        settings_file,
+        f"""\
+        SECRET_KEY = "@read_file {filename}"
+        """,
+    )
+    settings = Dynaconf(settings_file=settings_file)
+    assert settings.SECRET_KEY == ""
+
+
+@pytest.mark.skipif(
+    sys.platform.startswith("win"),
+    reason="Doesn't work on windows due to backslash decoding errors",
+)
+def test_read_file_whitespace_only(tmp_path):
+    """Test reading a file with only whitespace returns the content"""
+    filename = tmp_path / "whitespace.txt"
+    # Create a file with newlines only
+    with open(filename, "w") as f:
+        f.write("\n\n")
+    settings_file = tmp_path / "settings.toml"
+    create_file(
+        settings_file,
+        f"""\
+        SECRET_KEY = "@read_file {filename}"
+        """,
+    )
+    settings = Dynaconf(settings_file=settings_file)
+    assert settings.SECRET_KEY == "\n\n"
+
+
+@pytest.mark.skipif(
+    sys.platform.startswith("win"),
+    reason="Doesn't work on windows due to backslash decoding errors",
+)
+def test_read_file_path_with_spaces_quoted(tmp_path):
+    """Test reading a file with spaces in path using quotes"""
+    dir_with_space = tmp_path / "path with spaces"
+    dir_with_space.mkdir()
+    filename = dir_with_space / "file.txt"
+    create_file(filename, "SECRET")
+
+    settings_file = tmp_path / "settings.toml"
+    # Need to escape quotes for TOML
+    create_file(
+        settings_file,
+        f"""\
+        SECRET_KEY = "@read_file \\"{filename}\\""
+        """,
+    )
+    settings = Dynaconf(settings_file=settings_file)
+    assert settings.SECRET_KEY == "SECRET"
+
+
+@pytest.mark.skipif(
+    sys.platform.startswith("win"),
+    reason="Doesn't work on windows due to backslash decoding errors",
+)
+def test_read_file_quoted_path_with_default(tmp_path):
+    """Test quoted path with default value"""
+    settings_file = tmp_path / "settings.toml"
+    create_file(
+        settings_file,
+        """\
+        SECRET_KEY = "@read_file \\"/nonexistent/file.txt\\" fallback"
+        """,
+    )
+    settings = Dynaconf(settings_file=settings_file)
+    assert settings.SECRET_KEY == "fallback"
+
+
+@pytest.mark.skipif(
+    sys.platform.startswith("win"),
+    reason="Doesn't work on windows due to backslash decoding errors",
+)
+def test_read_file_directory_error(tmp_path):
+    """Test that reading a directory raises appropriate error"""
+    settings_file = tmp_path / "settings.toml"
+    create_file(
+        settings_file,
+        f"""\
+        SECRET_KEY = "@read_file {tmp_path}"
+        """,
+    )
+    with pytest.raises(DynaconfFormatError, match="not a file"):
+        settings = Dynaconf(settings_file=settings_file)
+        settings.SECRET_KEY
+
+
+@pytest.mark.skipif(
+    sys.platform.startswith("win"),
+    reason="Doesn't work on windows due to backslash decoding errors",
+)
+def test_read_file_empty_path_error(tmp_path):
+    """Test that empty path raises error"""
+    settings_file = tmp_path / "settings.toml"
+    create_file(
+        settings_file,
+        """\
+        SECRET_KEY = "@read_file \\"\\""
+        """,
+    )
+    # Empty path should raise error even with fallback
+    with pytest.raises(DynaconfFormatError, match="empty path"):
+        settings = Dynaconf(settings_file=settings_file)
+        settings.SECRET_KEY
+
+
+@pytest.mark.skipif(
+    sys.platform.startswith("win"),
+    reason="Doesn't work on windows due to backslash decoding errors",
+)
+def test_read_file_binary_file_error(tmp_path):
+    """Test that binary file raises appropriate error"""
+    # Create a binary file
+    binary_file = tmp_path / "binary.dat"
+    with open(binary_file, "wb") as f:
+        f.write(b"\x00\x01\x02\xff\xfe\xfd")
+
+    settings_file = tmp_path / "settings.toml"
+    create_file(
+        settings_file,
+        f"""\
+        SECRET_KEY = "@read_file {binary_file}"
+        """,
+    )
+    with pytest.raises(DynaconfFormatError, match="not a UTF-8 text file"):
+        settings = Dynaconf(settings_file=settings_file)
+        settings.SECRET_KEY
+
+
+def test_string_utils():
+    """Test string utils"""
+    assert parse_conf_data("@upper foo") == "FOO"
+    assert parse_conf_data("@lower FOO") == "foo"
+    assert parse_conf_data("@title foo bar") == "Foo Bar"
+    assert parse_conf_data("@capitalize foo bar") == "Foo bar"
+    assert parse_conf_data("@strip foo bar \n") == "foo bar"
+    assert parse_conf_data("@lstrip foo bar \n") == "foo bar \n"
+    assert parse_conf_data("@rstrip foo bar \n") == "foo bar"
+    assert parse_conf_data("@split foo bar") == ["foo", "bar"]
+    assert parse_conf_data("@casefold Foo BAR") == "foo bar"
+    assert parse_conf_data("@swapcase Foo BAR") == "fOO bar"
+
+
+# NEW TESTS FOR EDGE CASES
+
+
+def test_insert_quoted_multiword_value(settings):
+    """Test @insert with quoted multi-word values"""
+    settings.set("ITEMS", [1, 2, 3])
+    settings.set("ITEMS", '@insert 0 "hello world"')
+    assert settings.ITEMS == ["hello world", 1, 2, 3]
+
+
+def test_insert_single_quoted_value(settings):
+    """Test @insert with single-quoted values"""
+    settings.set("ITEMS", [1, 2])
+    settings.set("ITEMS", "@insert 0 'test value'")
+    assert settings.ITEMS == ["test value", 1, 2]
+
+
+def test_insert_quoted_empty_string(settings):
+    """Test @insert with empty string"""
+    settings.set("ITEMS", [1, 2])
+    settings.set("ITEMS", '@insert 0 ""')
+    assert settings.ITEMS == ["", 1, 2]
+
+
+def test_insert_with_json(settings):
+    """Test @insert with JSON object"""
+    settings.set("ITEMS", [])
+    settings.set("ITEMS", '@insert 0 @json {"key": "value"}')
+    assert settings.ITEMS == [{"key": "value"}]
+
+
+def test_insert_negative_index(settings):
+    """Test @insert with negative index"""
+    settings.set("ITEMS", [1, 2, 3])
+    settings.set("ITEMS", "@insert -1 99")
+    assert settings.ITEMS == [1, 2, 99, 3]
+
+
+def test_json_with_apostrophes(settings):
+    """Test @json with apostrophes in string values"""
+    settings.set("DATA", """@json {"message": "It's working"}""")
+    assert settings.DATA == {"message": "It's working"}
+
+
+def test_json_single_quoted_dict(settings):
+    """Test @json with single-quoted Python dict"""
+    settings.set("DATA", "@json {'key': 'value'}")
+    assert settings.DATA == {"key": "value"}
+
+
+def test_json_mixed_quotes(settings):
+    """Test @json with mixed quotes"""
+    settings.set("DATA", """@json {'outer': "inner"}""")
+    assert settings.DATA == {"outer": "inner"}
+
+
+def test_json_nested_quotes(settings):
+    """Test @json with nested quotes"""
+    settings.set("DATA", """@json {"key": "value with 'quotes'"}""")
+    assert settings.DATA == {"key": "value with 'quotes'"}
+
+
+def test_bool_with_whitespace(settings):
+    """Test @bool with whitespace"""
+    settings.set("FLAG", "@bool   true  ")
+    assert settings.FLAG is True
+
+    settings.set("FLAG2", "@bool  false  ")
+    assert settings.FLAG2 is False
+
+
+def test_bool_whitespace_empty_string(settings):
+    """Test @bool with whitespace-only string (empty after strip)"""
+    # Note: empty string after strip is in false_values
+    settings.set("FLAG", "@bool    ")
+    assert settings.FLAG is False
+
+
+def test_merge_quoted_value_with_comma(settings):
+    """Test @merge with quoted values containing commas"""
+    settings.set("CONFIG", """@merge message="Hello, World!" count=5""")
+    assert settings.CONFIG.message == "Hello, World!"
+    assert settings.CONFIG.count == 5
+
+
+def test_merge_quoted_value_with_equals(settings):
+    """Test @merge with quoted values containing equals"""
+    settings.set("CONFIG", """@merge url="http://api.com?key=value" """)
+    assert settings.CONFIG.url == "http://api.com?key=value"
+
+
+def test_merge_empty_value(settings):
+    """Test @merge with empty value"""
+    settings.set("CONFIG", '@merge key=""')
+    assert settings.CONFIG.key == ""
+
+
+def test_merge_spaces_around_equals(settings):
+    """Test @merge with spaces around equals"""
+    settings.set("CONFIG", "@merge key = value")
+    assert settings.CONFIG.key == "value"
+
+
+def test_merge_duplicate_keys(settings):
+    """Test @merge with duplicate keys (last one wins)"""
+    settings.set("CONFIG", "@merge key=first key=second")
+    # Should have only one key, with the last value
+    assert settings.CONFIG.key == "second"
+
+
+def test_int_converter_error_handling(settings):
+    """Test @int with invalid input raises DynaconfParseError"""
+    with pytest.raises(DynaconfParseError, match="Cannot convert"):
+        settings.set("NUM", "@int abc")
+
+
+def test_float_converter_error_handling(settings):
+    """Test @float with invalid input raises DynaconfParseError"""
+    with pytest.raises(DynaconfParseError, match="Cannot convert"):
+        settings.set("NUM", "@float xyz")
+
+
+def test_format_circular_reference(settings):
+    """Test circular reference detection in @format"""
+    settings.set("A", "@format {this.B}")
+    settings.set("B", "@format {this.A}")
+
+    with pytest.raises(DynaconfFormatError, match="Circular reference"):
+        settings.A
+
+
+def test_string_utils_with_numbers(settings):
+    """Test string utilities with numeric input"""
+    settings.set("NUM", "@upper 42")
+    assert settings.NUM == "42"
+
+
+def test_string_utils_with_none(settings):
+    """Test string utilities with None"""
+    settings.set("VAL", "@title None")
+    assert settings.VAL == "None"
+
+
+def test_read_file_with_get_combo(tmp_path, settings):
+    """Test @read_file combined with @get"""
+    filename = tmp_path / "secret.txt"
+    create_file(filename, "SECRET_VALUE")
+
+    settings.set("FILENAME", str(filename))
+    settings.set("SECRET", "@read_file @get FILENAME")
+    assert settings.SECRET == "SECRET_VALUE"
+
+
+def test_int_with_get_combo(settings):
+    """Test @int combined with @get"""
+    settings.set("NUMBER_STR", "42")
+    settings.set("NUMBER", "@int @get NUMBER_STR")
+    assert settings.NUMBER == 42
+
+
+# Tests for improved coverage of parse_conf.py
+
+
+def test_parse_quoted_string_empty(settings):
+    """Test _parse_quoted_string with empty string"""
+    from dynaconf.utils.parse_conf import _parse_quoted_string
+
+    result, remainder = _parse_quoted_string("")
+    assert result == ""
+    assert remainder == ""
+
+
+def test_merge_kv_pattern_fallback(settings):
+    """Test @merge using old KV_PATTERN (no quotes)"""
+    # Pattern starting with '=' matches KV_PATTERN but not KV_PATTERN_QUOTED
+    settings.set("FALLBACK_CONFIG", "@merge =value")
+    # This creates a dict with empty key (though malformed)
+    assert isinstance(settings.FALLBACK_CONFIG, dict)
+    assert "" in settings.FALLBACK_CONFIG
+
+
+def test_insert_with_remainder_not_number(settings):
+    """Test @insert when first token is not a number"""
+    # When first token is not a number and remainder exists
+    settings.set("ITEMS", [])
+    settings.set("ITEMS", "@insert @json {}")
+    # First token is "@json", not a number, so it uses original value
+    assert settings.ITEMS == [{}]
+
+
+def test_insert_value_error_handling(settings):
+    """Test @insert ValueError/IndexError handling"""
+    # Create edge case where int() or string access might fail
+    settings.set("ITEMS", [1, 2])
+    # Empty string after stripping negative sign triggers exception path
+    settings.set("ITEMS", "@insert - value")
+    # Should default to index 0 and use original value
+    assert "value" in str(settings.ITEMS)
+
+
+def test_base_formatter_key_error(settings):
+    """Test BaseFormatter KeyError handling"""
+    # Trigger KeyError in formatter
+    settings.set("VAL", "@format {env[NONEXISTENT_KEY_XYZ123]}")
+    with pytest.raises(DynaconfFormatError, match="can't interpolate"):
+        settings.VAL
+
+
+def test_base_formatter_attribute_error(settings):
+    """Test BaseFormatter AttributeError handling"""
+    # Trigger AttributeError in formatter
+    settings.set("VAL", "@format {this.NONEXISTENT_ATTR_XYZ123}")
+    with pytest.raises(DynaconfFormatError, match="can't interpolate"):
+        settings.VAL
+
+
+def test_get_formatter_empty_remainder_break(settings):
+    """Test _get_formatter with empty remainder"""
+    # When parsing @get with trailing spaces that become empty
+    settings.set("FOO", "42")
+    settings.set("VAL", "@get FOO   ")  # Trailing spaces
+    assert settings.VAL == "42"
+
+
+@pytest.mark.skipif(
+    sys.platform.startswith("win"),
+    reason="Permission tests don't work reliably on Windows",
+)
+def test_read_file_permission_error(tmp_path):
+    """Test @read_file with permission denied"""
+    import stat
+
+    filename = tmp_path / "no_permission.txt"
+    create_file(filename, "secret")
+
+    # Remove read permission
+    os.chmod(filename, stat.S_IWUSR)
+
+    settings_file = tmp_path / "settings.toml"
+    create_file(
+        settings_file,
+        f"""\
+        SECRET = "@read_file {filename}"
+        """,
+    )
+
+    try:
+        with pytest.raises(DynaconfFormatError, match="Permission denied"):
+            settings = Dynaconf(settings_file=settings_file)
+            settings.SECRET
+    finally:
+        # Restore permissions for cleanup
+        os.chmod(filename, stat.S_IRUSR | stat.S_IWUSR)
+
+
+@pytest.mark.skipif(
+    sys.platform.startswith("win"),
+    reason="OSError simulation doesn't work on Windows",
+)
+def test_read_file_os_error(tmp_path, monkeypatch):
+    """Test @read_file with OSError"""
+    filename = tmp_path / "test.txt"
+    create_file(filename, "data")
+
+    settings_file = tmp_path / "settings.toml"
+    create_file(
+        settings_file,
+        f"""\
+        SECRET = "@read_file {filename}"
+        """,
+    )
+
+    # Mock open to raise OSError
+    original_open = open
+
+    def mock_open(*args, **kwargs):
+        if str(filename) in str(args[0]):
+            raise OSError("Simulated I/O error")
+        return original_open(*args, **kwargs)
+
+    settings = Dynaconf(settings_file=settings_file)
+
+    with monkeypatch.context() as m:
+        m.setattr("builtins.open", mock_open)
+        with pytest.raises(DynaconfFormatError, match="Error reading"):
+            settings.SECRET
+
+
+def test_safe_json_parse_extract_objects(settings):
+    """Test _safe_json_parse with extract_json_objects"""
+    # Test case where extract_json_objects finds valid JSON
+    # after Python boolean/None replacement
+    # Using single quotes around keys/values to force extract path
+    settings.set(
+        "DATA", "@json {'key': True}"
+    )  # Python-style True with single quotes
+    # This should parse successfully using extract_json_objects path
+    assert settings.DATA == {"key": True}
+
+
+def test_safe_json_parse_complete_failure():
+    """Test _safe_json_parse when all methods fail"""
+    from dynaconf.utils.parse_conf import _safe_json_parse
+
+    # Invalid JSON/Python syntax that fails all parsing methods
+    with pytest.raises(DynaconfParseError, match="Cannot parse as JSON"):
+        _safe_json_parse("not valid { json or python }")
+
+
+def test_parse_conf_data_tomlfy_filter_none(settings):
+    """Test parse_conf_data with tomlfy_filter=None"""
+    # When tomlfy_filter is None, in_tomlfy_filter should return False
+    data = {"key": "value"}
+    result = parse_conf_data(
+        data, tomlfy=True, box_settings=settings, tomlfy_filter=None
+    )
+    assert result == data
+
+
+def test_parse_conf_data_tomlfy_filter_non_string(settings):
+    """Test parse_conf_data with non-string key in filter"""
+    # When filter contains non-string keys (like int), it should compare directly
+    data = {123: "value", "key": "456"}
+    # Use a filter with an integer key
+    result = parse_conf_data(
+        data, tomlfy=True, box_settings=settings, tomlfy_filter=[123]
+    )
+    # The integer key should match and be tomlfy'd
+    assert result == {123: "value", "key": "456"}
+
+
+# Additional targeted tests for specific line coverage
+
+
+def test_get_formatter_whitespace_becomes_empty(settings):
+    """Test _get_formatter where remainder has only whitespace"""
+    # This happens when there's whitespace between tokens that gets stripped
+    settings.set("FOO", "bar")
+    # Multiple spaces after key - should be stripped and hit the break
+    settings.set("VAL", "@get FOO        ")
+    assert settings.VAL == "bar"
+
+
+def test_json_extract_with_embedded_json(settings):
+    """Test _safe_json_parse with extract_json_objects"""
+    from dynaconf.utils.parse_conf import _safe_json_parse
+
+    # A case where extract_json_objects finds JSON after boolean replacement
+    # Using Python-style True/False that needs replacement
+    value = '{"key": True, "other": False}'
+    result = _safe_json_parse(value)
+    assert result == {"key": True, "other": False}
+
+
+def test_tomlfy_filter_with_dotted_key(settings):
+    """Test parse_conf_data with dotted key in tomlfy_filter"""
+    # This tests dotted path handling in tomlfy_filter
+    data = {"mykey": "123", "other": "456"}
+
+    # Use a dotted path in filter - should match the leaf key
+    result = parse_conf_data(
+        data,
+        tomlfy=True,
+        box_settings=settings,
+        tomlfy_filter=["parent.mykey"],  # Dotted path
+    )
+    # The mykey should be tomlfy'd (converted to int)
+    assert result["mykey"] == 123
+    assert result["other"] == "456"  # Not in filter, stays string
+
+
+def test_merge_with_comma_list_fallback(settings):
+    """Test @merge with comma-separated values"""
+    # When merge value is a string with commas but no key=value pairs
+    # and not valid JSON, it splits on comma
+    settings.set("COMMA_LIST", "@merge foo,bar,baz")
+    assert settings.COMMA_LIST == ["foo", "bar", "baz"]
+
+
+def test_merge_single_value_fallback(settings):
+    """Test @merge with single value"""
+    # When merge value is a plain string (no JSON, no key=value, no commas)
+    settings.set("SINGLE_VALUE", "@merge singlevalue")
+    assert settings.SINGLE_VALUE == ["singlevalue"]

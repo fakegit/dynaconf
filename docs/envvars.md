@@ -2,24 +2,25 @@
 
 Dynaconf prioritizes environment variables over files as the best recommendation to keep your settings.
 
-According to [12factorapp](https://12factor.net) is is a good practice to keep your configurations based on environment.
+According to [12factorapp](https://12factor.net) it is a good practice to keep your configurations based on environment.
 
 In addition to that Dynaconf offers some approaches you may want to **Optionally** follow:
 
-- Add a list of validators to `validators=[Validator()]` on your dynaconf settings instance and provide [defaults and constraints](/validation/).
+- Add a list of validators to `validators=[Validator()]` on your dynaconf settings instance and provide [defaults and constraints](validation.md).
 - Enable `load_dotenv` and provide a `.env.example` or `.env` file with the default variables.
-- Write your variables in a [settings file](/settings_files) in the format of your choice.
-- Load your settings from [vault or redis](/secrets/)
+- Write your variables in a [settings file](settings_files.md) in the format of your choice.
+- Load your settings from [vault or redis](secrets.md)
 
 ## Environment variables
 
-You can override any setting key by exporting an environment variable prefixed by `DYNACONF_` (or by the [custom prefix](configuration/#envvar_prefix))
+You can override any setting key by exporting an environment variable prefixed by `DYNACONF_` (or by the [custom prefix](configuration.md/#envvar_prefix)).
+
+!!! warning
+    Dynaconf will only look for UPPERCASE prefixed envvars. This means envvar exported as `dynaconf_value` or `myprefix_value` won't be loaded, while `DYNACONF_VALUE` and `MYPREFIX_VALUE` (when proper set) will.
 
 ### Example
 
-!!! info
-    When loading environment variables, dynaconf will parse the value using `toml` language
-    so it will try to automatic convert to the proper data type.
+Notice that when loading environment variables, dynaconf will parse the value using `toml` language so it will try to automatically convert to the proper data type.
 
 ```bash
 export DYNACONF_NAME=Bruno                                   # str: "Bruno"
@@ -32,7 +33,14 @@ export DYNACONF_STRING_NUM="'76'"                            # str: "76"
 export DYNACONF_PERSON__IS_ADMIN=true                        # bool: True (nested)
 ```
 
-with the above it is now possible to read the settings from your `program.py` using.
+!!! info
+    For envvars Dynaconf will automatically transform `True` and `False` to `true` and `false` respectively,
+    this transformation allows TOML to parse the value as a boolean.
+    If you want to keep the original value in this case use `@str` or wrap it in quotes twice like `FOO='"True"'`
+    Note that this applies only for strictly string equal to `True|False` doesn't apply to same string found
+    inside toml data structures.
+
+With the above it is now possible to read the settings in your `program.py` using:
 
 ```python
 from dynaconf import Dynaconf
@@ -54,6 +62,16 @@ assert settings.STRING_NUM == "76"
     existing settings solution. You can access using `.notation`, `[item] indexing`, `.get method`
     and also it allows `.notation.nested` for data structures like dicts.
     **Also variable access is case insensitive for the first level key**
+
+!!! warning
+    When exporting data structures such as `dict` and `list` you have to use one of:
+    ```
+    export DYNACONF_TOML_DICT={key="value"}
+    export DYNACONF_TOML_LIST=["item"]
+    export DYNACONF_JSON_DICT='@json {"key": "value"}'
+    export DYNACONF_JSON_LIST='@json ["item"]'
+    ```
+    Those 2 ways are the only ways for dynaconf to load `dicts` and `lists` from envvars.
 
 ## Custom Prefix
 
@@ -98,7 +116,7 @@ and Dynaconf comes with `Python-Dotenv` support.
 You can put in the root of your application a file called **.env**
 
 ```bash
-PREFIX_USER=admin
+DYNACONF_USER=admin
 ```
 
 Then pass `load_dotenv=True` to your settings.
@@ -129,9 +147,34 @@ Dynaconf support 2 types of lazy values `format` and `jinja` which allows
 template substitutions.
 
 ```bash
-export PREFIX_PATH='@format {env{"HOME"}/.config/{this.DB_NAME}'
+export PREFIX_PATH='@format {env[HOME]}/.config/{this.DB_NAME}'
 export PREFIX_PATH='@jinja {{env.HOME}}/.config/{{this.DB_NAME}} | abspath'
 ```
+
+### Adding a Custom Casting Token
+
+If you would like to add a custom casting token, you can do so by adding a
+converter. For example, if we would like to cast strings to a pathlib.Path
+object we can add in our python code:
+
+```python
+# app.py
+from pathlib import Path
+from dynaconf import add_converter
+
+add_converter("path", Path)
+```
+
+In the settings file we can now use the @path casting token. Like with other
+casting tokens you can also combine them:
+
+```toml
+# settings.toml
+my_path = "@path /home/foo/example.txt"
+parent = "@path @format {env[HOME]}/parent"
+child = "@path @format {this.parent}/child"
+```
+
 
 ## Environment variables filtering
 

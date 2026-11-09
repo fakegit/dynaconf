@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import importlib
 import os
 import sys
@@ -7,6 +9,7 @@ from dynaconf.utils import RENAMED_VARS
 from dynaconf.utils import upperfy
 from dynaconf.utils import warn_deprecations
 from dynaconf.utils.files import find_file
+from dynaconf.utils.parse_conf import boolean_fix
 from dynaconf.utils.parse_conf import parse_conf_data
 from dynaconf.vendor.dotenv import load_dotenv
 
@@ -31,7 +34,7 @@ def get(key, default=None):
         value = try_renamed(key, value, old, new)
 
     return (
-        parse_conf_data(value, tomlfy=True, box_settings={})
+        parse_conf_data(boolean_fix(value), tomlfy=True, box_settings={})
         if value is not None
         else default
     )
@@ -75,17 +78,18 @@ ROOT_PATH_FOR_DYNACONF = get("ROOT_PATH_FOR_DYNACONF", None)
 # Default settings file
 SETTINGS_FILE_FOR_DYNACONF = get("SETTINGS_FILE_FOR_DYNACONF", [])
 
-# MISPELLS `FILES` when/if it happens
-mispelled_files = get("SETTINGS_FILES_FOR_DYNACONF", None)
-if not SETTINGS_FILE_FOR_DYNACONF and mispelled_files is not None:
-    SETTINGS_FILE_FOR_DYNACONF = mispelled_files
+# MISSPELLS `FILES` when/if it happens
+misspelled_files = get("SETTINGS_FILES_FOR_DYNACONF", None)
+if not SETTINGS_FILE_FOR_DYNACONF and misspelled_files is not None:
+    SETTINGS_FILE_FOR_DYNACONF = misspelled_files
 
 # # ENV SETTINGS
 # # In dynaconf 1.0.0 `NAMESPACE` got renamed to `ENV`
 
 
-# If provided environments will be loaded separatelly
+# If provided environments will be loaded separately
 ENVIRONMENTS_FOR_DYNACONF = get("ENVIRONMENTS_FOR_DYNACONF", False)
+MAIN_ENV_FOR_DYNACONF = get("MAIN_ENV_FOR_DYNACONF", "MAIN")
 
 # If False dynaconf will allow access to first level settings only in upper
 LOWERCASE_READ_FOR_DYNACONF = get("LOWERCASE_READ_FOR_DYNACONF", True)
@@ -122,11 +126,16 @@ IGNORE_UNKNOWN_ENVVARS_FOR_DYNACONF = get(
     "IGNORE_UNKNOWN_ENVVARS_FOR_DYNACONF", False
 )
 
+AUTO_CAST_FOR_DYNACONF = get("AUTO_CAST_FOR_DYNACONF", True)
+
 # The default encoding to open settings files
 ENCODING_FOR_DYNACONF = get("ENCODING_FOR_DYNACONF", "utf-8")
 
 # Merge objects on load
 MERGE_ENABLED_FOR_DYNACONF = get("MERGE_ENABLED_FOR_DYNACONF", False)
+
+# Lookup keys considering dots as separators
+DOTTED_LOOKUP_FOR_DYNACONF = get("DOTTED_LOOKUP_FOR_DYNACONF", True)
 
 # BY default `__` is the separator for nested env vars
 # export `DYNACONF__DATABASE__server=server.com`
@@ -134,6 +143,17 @@ MERGE_ENABLED_FOR_DYNACONF = get("MERGE_ENABLED_FOR_DYNACONF", False)
 # Should result in settings.DATABASE == {'server': 'server.com', 'PORT': 6666}
 # To disable it one can set `NESTED_SEPARATOR_FOR_DYNACONF=false`
 NESTED_SEPARATOR_FOR_DYNACONF = get("NESTED_SEPARATOR_FOR_DYNACONF", "__")
+
+# By default `__(\d+)` (regexp) is the separated for nested list env vars
+# export `DYNACONF_DATABASE_servers__0=server.com`
+# export `DYNACONF_DATABASE_servers__1=server.org`
+# export `DYNACONF_DATABASE_servers_2_0=server.io`
+# Should result in settings.DATABASE == {
+#   "servers": ["server.com", "server.org"],
+#   "servers_2_0": "server.io"
+# }
+# To disable it one can set `INDEX_SEPARATOR_FOR_DYNACONF=None`
+INDEX_SEPARATOR_FOR_DYNACONF = get("INDEX_SEPARATOR_FOR_DYNACONF", None)
 
 # The env var specifying settings module
 ENVVAR_FOR_DYNACONF = get("ENVVAR_FOR_DYNACONF", "SETTINGS_FILE_FOR_DYNACONF")
@@ -148,6 +168,7 @@ default_redis = {
     "password": get("REDIS_PASSWORD_FOR_DYNACONF", None),
 }
 REDIS_FOR_DYNACONF = get("REDIS_FOR_DYNACONF", default_redis)
+REDIS_URL_FOR_DYNACONF = get("REDIS_URL_FOR_DYNACONF", None)
 REDIS_ENABLED_FOR_DYNACONF = get("REDIS_ENABLED_FOR_DYNACONF", False)
 
 # Hashicorp Vault Project
@@ -164,6 +185,7 @@ default_vault = {
     "timeout": get("VAULT_TIMEOUT_FOR_DYNACONF", None),
     "proxies": get("VAULT_PROXIES_FOR_DYNACONF", None),
     "allow_redirects": get("VAULT_ALLOW_REDIRECTS_FOR_DYNACONF", None),
+    "namespace": get("VAULT_NAMESPACE_FOR_DYNACONF", None),
 }
 VAULT_FOR_DYNACONF = get("VAULT_FOR_DYNACONF", default_vault)
 VAULT_ENABLED_FOR_DYNACONF = get("VAULT_ENABLED_FOR_DYNACONF", False)
@@ -179,6 +201,9 @@ VAULT_AUTH_WITH_IAM_FOR_DYNACONF = get(
 VAULT_AUTH_ROLE_FOR_DYNACONF = get("VAULT_AUTH_ROLE_FOR_DYNACONF", None)
 VAULT_ROLE_ID_FOR_DYNACONF = get("VAULT_ROLE_ID_FOR_DYNACONF", None)
 VAULT_SECRET_ID_FOR_DYNACONF = get("VAULT_SECRET_ID_FOR_DYNACONF", None)
+VAULT_USERNAME_FOR_DYNACONF = get("VAULT_USERNAME_FOR_DYNACONF", None)
+VAULT_PASSWORD_FOR_DYNACONF = get("VAULT_PASSWORD_FOR_DYNACONF", None)
+VAULT_TOKEN_RENEW_FOR_DYNACONF = get("VAULT_TOKEN_RENEW_FOR_DYNACONF", False)
 
 # Only core loaders defined on this list will be invoked
 core_loaders = ["YAML", "TOML", "INI", "JSON", "PY"]
@@ -198,6 +223,8 @@ SILENT_ERRORS_FOR_DYNACONF = get("SILENT_ERRORS_FOR_DYNACONF", True)
 # always fresh variables
 FRESH_VARS_FOR_DYNACONF = get("FRESH_VARS_FOR_DYNACONF", [])
 
+# This was missing for some reason
+# LOAD_DOTENV_FOR_DYNACONF = get("LOAD_DOTENV_FOR_DYNACONF", False)
 DOTENV_PATH_FOR_DYNACONF = get("DOTENV_PATH_FOR_DYNACONF", None)
 DOTENV_VERBOSE_FOR_DYNACONF = get("DOTENV_VERBOSE_FOR_DYNACONF", False)
 DOTENV_OVERRIDE_FOR_DYNACONF = get("DOTENV_OVERRIDE_FOR_DYNACONF", False)
@@ -229,6 +256,20 @@ PRELOAD_FOR_DYNACONF = get("PRELOAD_FOR_DYNACONF", [])
 
 # Files to skip if found on search tree
 SKIP_FILES_FOR_DYNACONF = get("SKIP_FILES_FOR_DYNACONF", [])
+
+# YAML reads empty vars as None, should dynaconf apply validator defaults?
+# this is set to None, then evaluated on base.Settings.setdefault
+# possible values are True/False
+APPLY_DEFAULT_ON_NONE_FOR_DYNACONF = get(
+    "APPLY_DEFAULT_ON_NONE_FOR_DYNACONF", None
+)
+
+# Auto trigger validation when Settings update methods are called directly
+# (set, update, load_file)
+VALIDATE_ON_UPDATE_FOR_DYNACONF = get("VALIDATE_ON_UPDATE_FOR_DYNACONF", False)
+
+# Use system environ as fallback when a setting was not set
+SYSENV_FALLBACK_FOR_DYNACONF = get("SYSENV_FALLBACK_FOR_DYNACONF", False)
 
 
 # Backwards compatibility with renamed variables

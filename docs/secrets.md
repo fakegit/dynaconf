@@ -54,6 +54,8 @@ VAULT_AUTH_WITH_IAM_FOR_DYNACONF=True
 VAULT_AUTH_ROLE_FOR_DYNACONF="vault-role"
 # Authenticate with root token
 VAULT_ROOT_TOKEN_FOR_DYNACONF="root-token"
+# If you want to perform (can be useful when using orphan VAULT_TOKEN_FOR_DYNACONF)
+VAULT_TOKEN_RENEW_FOR_DYNACONF="true"
 ```
 
 Or pass it to the `Dynaconf` instance.
@@ -162,7 +164,7 @@ REDIS_USERNAME_FOR_DYNACONF=<ACL username>(optional)
 REDIS_PASSWORD_FOR_DYNACONF=<password>(optional)
 ```
 
-You can now write variables direct in to a redis hash named `DYNACONF_< env >` for example:
+You can now write variables direct in to a redis hash named `< ENVVAR_PREFIX_FOR_DYNACONF >_< env >`. For example, when using the default `DYNACONF` envvar prefix:
 
 - `DYNACONF_DEFAULT`: default values
 - `DYNACONF_DEVELOPMENT`: loaded only when `ENV_FOR_DYNACONF=development` (default)
@@ -249,4 +251,4 @@ print(settings.MYSQL_HOST)  # This data is being read from redis imediatelly!
 
 Do you want to store settings in other databases like NoSQL, Relational Databases or other services?
 
-Please see how to [extend dynaconf](/advanced/) to add your custom loaders.
+Please see how to [extend dynaconf](advanced.md) to add your custom loaders.

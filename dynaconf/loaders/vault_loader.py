@@ -1,5 +1,8 @@
 # docker run -e 'VAULT_DEV_ROOT_TOKEN_ID=myroot' -p 8200:8200 vault
 # pip install hvac
+from __future__ import annotations
+
+from dynaconf.loaders.base import SourceMetadata
 from dynaconf.utils import build_env_list
 from dynaconf.utils.parse_conf import parse_conf_data
 
@@ -10,6 +13,7 @@ except ImportError:
 
 try:
     from hvac import Client
+    from hvac.exceptions import Forbidden
     from hvac.exceptions import InvalidPath
 except ImportError:
     raise ImportError(
@@ -31,12 +35,18 @@ def get_client(obj):
         **{k: v for k, v in obj.VAULT_FOR_DYNACONF.items() if v is not None}
     )
     if obj.VAULT_ROLE_ID_FOR_DYNACONF is not None:
-        client.auth_approle(
+        client.auth.approle.login(
             role_id=obj.VAULT_ROLE_ID_FOR_DYNACONF,
             secret_id=obj.get("VAULT_SECRET_ID_FOR_DYNACONF"),
         )
     elif obj.VAULT_ROOT_TOKEN_FOR_DYNACONF is not None:
         client.token = obj.VAULT_ROOT_TOKEN_FOR_DYNACONF
+    elif obj.VAULT_USERNAME_FOR_DYNACONF is not None:
+        client.auth.userpass.login(
+            username=obj.VAULT_USERNAME_FOR_DYNACONF,
+            password=obj.VAULT_PASSWORD_FOR_DYNACONF,
+        )
+
     elif obj.VAULT_AUTH_WITH_IAM_FOR_DYNACONF:
         if boto3 is None:
             raise ImportError(
@@ -52,15 +62,19 @@ def get_client(obj):
             credentials.token,
             role=obj.VAULT_AUTH_ROLE_FOR_DYNACONF,
         )
+
+    if obj.VAULT_TOKEN_RENEW_FOR_DYNACONF:
+        client.auth.token.renew_self()
+
     assert client.is_authenticated(), (
         "Vault authentication error: is VAULT_TOKEN_FOR_DYNACONF or "
         "VAULT_ROLE_ID_FOR_DYNACONF defined?"
     )
-    client.kv.default_kv_version = obj.VAULT_KV_VERSION_FOR_DYNACONF
+    client.secrets.kv.default_kv_version = obj.VAULT_KV_VERSION_FOR_DYNACONF
     return client
 
 
-def load(obj, env=None, silent=None, key=None):
+def load(obj, env=None, silent=None, key=None, validate=False):
     """Reads and loads in to "settings" a single key or all keys from vault
 
     :param obj: the settings instance
@@ -71,20 +85,38 @@ def load(obj, env=None, silent=None, key=None):
     """
     client = get_client(obj)
     try:
-        dirs = client.secrets.kv.list_secrets(
-            path=obj.VAULT_PATH_FOR_DYNACONF,
-            mount_point=obj.VAULT_MOUNT_POINT_FOR_DYNACONF,
-        )["data"]["keys"]
+        if obj.VAULT_KV_VERSION_FOR_DYNACONF == 2:
+            dirs = client.secrets.kv.v2.list_secrets(
+                path=obj.VAULT_PATH_FOR_DYNACONF,
+                mount_point=obj.VAULT_MOUNT_POINT_FOR_DYNACONF,
+            )["data"]["keys"]
+        else:
+            dirs = client.secrets.kv.v1.list_secrets(
+                path=obj.VAULT_PATH_FOR_DYNACONF,
+                mount_point=obj.VAULT_MOUNT_POINT_FOR_DYNACONF,
+            )["data"]["keys"]
     except InvalidPath:
         # The given path is not a directory
         dirs = []
-    env_list = dirs + build_env_list(obj, env)
+    except Forbidden:
+        # The given token does not have permission to list the given path
+        dirs = []
+    # First look for secrets into environments less store
+    if not obj.ENVIRONMENTS_FOR_DYNACONF:
+        # By adding '', dynaconf will now read secrets from environments-less
+        # store which are not written by `dynaconf write` to Vault store
+        env_list = [obj.MAIN_ENV_FOR_DYNACONF.lower(), ""]
+    # Finally, look for secret into all the environments
+    else:
+        env_list = dirs + build_env_list(obj, env)
     for env in env_list:
         path = "/".join([obj.VAULT_PATH_FOR_DYNACONF, env])
         try:
             if obj.VAULT_KV_VERSION_FOR_DYNACONF == 2:
                 data = client.secrets.kv.v2.read_secret_version(
-                    path, mount_point=obj.VAULT_MOUNT_POINT_FOR_DYNACONF
+                    path,
+                    mount_point=obj.VAULT_MOUNT_POINT_FOR_DYNACONF,
+                    raise_on_deleted_version=True,  # keep default behavior
                 )
             else:
                 data = client.secrets.kv.read_secret(
@@ -94,21 +126,38 @@ def load(obj, env=None, silent=None, key=None):
         except InvalidPath:
             # If the path doesn't exist, ignore it and set data to None
             data = None
+        except Forbidden:
+            data = None
         if data:
             # There seems to be a data dict within a data dict,
             # extract the inner data
             data = data.get("data", {}).get("data", {})
         try:
-            if obj.VAULT_KV_VERSION_FOR_DYNACONF == 2 and data:
+            source_metadata = SourceMetadata(IDENTIFIER, "unique", env)
+            if (
+                obj.VAULT_KV_VERSION_FOR_DYNACONF == 2
+                and obj.ENVIRONMENTS_FOR_DYNACONF
+                and data
+            ):
                 data = data.get("data", {})
             if data and key:
                 value = parse_conf_data(
                     data.get(key), tomlfy=True, box_settings=obj
                 )
                 if value:
-                    obj.set(key, value)
+                    obj.set(
+                        key,
+                        value,
+                        validate=validate,
+                        loader_identifier=source_metadata,
+                    )
             elif data:
-                obj.update(data, loader_identifier=IDENTIFIER, tomlfy=True)
+                obj.update(
+                    data,
+                    loader_identifier=source_metadata,
+                    tomlfy=True,
+                    validate=validate,
+                )
         except Exception:
             if silent:
                 return False

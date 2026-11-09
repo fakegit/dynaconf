@@ -7,14 +7,7 @@
     <em>Configuration Management for Python.</em>
 </p>
 
-<p align="center"><a href="/LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-007EC7.svg?style=flat-square"></a> <a href="https://pypi.python.org/pypi/dynaconf"><img alt="PyPI" src="https://img.shields.io/pypi/v/dynaconf.svg"></a><a href="https://github.com/rochacbruno/dynaconf/actions/workflows/main.yml"><img src="https://github.com/rochacbruno/dynaconf/actions/workflows/main.yml/badge.svg"></a><a href="https://codecov.io/gh/rochacbruno/dynaconf"><img alt="codecov" src="https://codecov.io/gh/rochacbruno/dynaconf/branch/master/graph/badge.svg"></a> <a href="https://www.codacy.com/gh/rochacbruno/dynaconf/dashboard?utm_source=github.com&amp;utm_medium=referral&amp;utm_content=rochacbruno/dynaconf&amp;utm_campaign=Badge_Grade"><img src="https://app.codacy.com/project/badge/Grade/42d2f11ef0a446808b246c8c69603f6e"/></a> <img alt="GitHub Release Date" src="https://img.shields.io/github/release-date/rochacbruno/dynaconf.svg"> <img alt="GitHub last commit" src="https://img.shields.io/github/last-commit/rochacbruno/dynaconf.svg"> <a href="https://github.com/rochacbruno/dynaconf/discussions"><img alt="Discussions" src="https://img.shields.io/badge/discussions-forum-yellow.svg?logo=googlechat"></a> <a href="https://github.com/rochacbruno/learndynaconf"><img alt="Demo" src="https://img.shields.io/badge/demo-learn-blue.svg?logo=gnubash"></a></p>
-
-
-[![Foo](https://xscode.com/assets/promo-banner.svg)](https://xscode.com/rochacbruno/dynaconf)
-
-
-> **TIP** You can see a working demo here: https://github.com/rochacbruno/learndynaconf
-
+<p align="center"><a href="/LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-007EC7.svg?style=flat-square"></a> <a href="https://pypi.python.org/pypi/dynaconf"><img alt="PyPI" src="https://img.shields.io/pypi/v/dynaconf.svg"></a><a href="https://github.com/dynaconf/dynaconf/actions/workflows/main.yml"><img src="https://github.com/dynaconf/dynaconf/actions/workflows/main.yml/badge.svg"></a><a href="https://codecov.io/gh/dynaconf/dynaconf"><img alt="codecov" src="https://codecov.io/gh/dynaconf/dynaconf/branch/master/graph/badge.svg"></a> <a href="https://www.codacy.com/gh/dynaconf/dynaconf/dashboard?utm_source=github.com&amp;utm_medium=referral&amp;utm_content=dynaconf/dynaconf&amp;utm_campaign=Badge_Grade"><img src="https://app.codacy.com/project/badge/Grade/3fb2de98464442f99a7663181803b400"/></a> <img alt="GitHub Release Date" src="https://img.shields.io/github/release-date/dynaconf/dynaconf.svg"> <img alt="GitHub last commit" src="https://img.shields.io/github/last-commit/dynaconf/dynaconf.svg"> <a href="https://github.com/dynaconf/dynaconf/discussions"><img alt="Discussions" src="https://img.shields.io/badge/discussions-forum-yellow.svg?logo=googlechat"></a></p>
 
 ## Features
 
@@ -74,7 +67,7 @@ pip install dynaconf
     .
     ├── config.py       # Where you import your settings object (required)
     ├── .secrets.toml   # Sensitive data like passwords and tokens (optional)
-    └── settings.toml   # Application setttings (optional)
+    └── settings.toml   # Application settings (optional)
     ```
 
     === "your_program.py"
@@ -90,7 +83,7 @@ pip install dynaconf
         ```
 
     === "config.py"
-        On this file a new instance of **Dynaconf** settings object is
+        In this file a new instance of **Dynaconf** settings object is
         initialized and configured.
 
         ```python
@@ -100,7 +93,7 @@ pip install dynaconf
             settings_files=['settings.toml', '.secrets.toml'],
         )
         ```
-        More options described on [Dynaconf Configuration](/configuration/)
+        More options are described on [Dynaconf Configuration](configuration.md)
 
     === "settings.toml"
         **Optionally** store settings in a file (or in multiple files)
@@ -110,29 +103,31 @@ pip install dynaconf
         number = 1234
         a_float = 56.8
         a_list = [1, 2, 3, 4]
-        a_dict = {hello="world"}
+
+        [a_dict]
+        hello = "world"
 
         [a_dict.nested]
         other_level = "nested value"
         ```
-        More details in [Settings Files](/settings_files/)
+        More details in [Settings Files](settings_files.md)
 
     === ".secrets.toml"
-        **Optionally** store sensitive data in a local only file `.secrets.toml`
+        **Optionally** store sensitive data in a local-only file `.secrets.toml`
         ```toml
         password = "s3cr3t"
         token = "dfgrfg5d4g56ds4gsdf5g74984we5345-"
         message = "This file doesn't go to your pub repo"
         ```
 
-        > ⚠️ `dynaconf init` command puts the `.secrets.*` in yout `.gitignore` to avoid it to be exposed on public repos but it is your responsibility to keep it safe in your local environment, also the recommendation for production environments is to use the built-in support for Hashicorp Vault service for password and tokens.
+        > ⚠️ `dynaconf init` command puts the `.secrets.*` in your `.gitignore` to avoid it being exposed on public repos but it is your responsibility to keep it safe in your local environment, also the recommendation for production environments is to use the built-in support for Hashicorp Vault service for password and tokens.
 
         ```ini
-        # Secrets doesn't go to public repos
+        # Secrets don't go to public repos
         .secrets.*
         ```
 
-        read more on [Secrets](/secrets/)
+        read more on [Secrets](secrets.md)
 
     === "env vars"
         **Optionally** override using prefixed environment variables. (`.env` files are also supported)
@@ -147,14 +142,14 @@ pip install dynaconf
 
     ---
 
-    > ℹ️ You can create the files yourself instead of using the `dynaconf init` command and it give any name you want instead of the default `config.py` (the file must be in your importable python path)
+    > ℹ️ You can create the files yourself instead of using the `dynaconf init` command and it gives any name you want instead of the default `config.py` (the file must be in your importable python path)
 
 ??? "Or using Flask"
 
     #### Using Flask
 
     === "app.py"
-        In your Flask project import `FlaskDynaconf` extension and initialize as a Flask extension.
+        In your Flask project import `FlaskDynaconf` extension and initialize it as a Flask extension.
         ```python hl_lines="2 6"
         from flask import Flask
         from dynaconf import FlaskDynaconf
@@ -167,7 +162,7 @@ pip install dynaconf
         Across your Flask application you can access all the settings variables direct from `app.config` that is now replaced by a dynaconf settings instance.
 
         ```python
-        @app.route("/a_view)
+        @app.route("/a_view")
         def a_view():
             app.config.NAME == "BRUNO"
             app.config['DEBUG'] is True
@@ -192,12 +187,12 @@ pip install dynaconf
         SQLALCHEMY_DB_URI = "postgresql://..."
         ```
 
-        > ℹ️ On Flask, settings files are layered in multiple environments by default, you can disable it passing `environments=False` to FlaskDynaconf extension.
+        > ℹ️ On Flask, settings files are layered in multiple environments by default, you can disable it by passing `environments=False` to FlaskDynaconf extension.
 
-        More details in [Settings Files](/settings_files/)
+        More details in [Settings Files](settings_files.md)
 
     === ".secrets.toml"
-        **Optionally** store sensitive data in a local only file `.secrets.toml`
+        **Optionally** store sensitive data in a local-only file `.secrets.toml`
         ```toml
         [development]
         password = "s3cr3t"
@@ -205,14 +200,14 @@ pip install dynaconf
         message = "This file doesn't go to your pub repo"
         ```
 
-        > ⚠️ put `.secrets.*` in yout `.gitignore` to avoid it to be exposed on public repos but it is your responsibility to keep it safe in your local environment, also the recommendation for production environments is to use the built-in support for Hashicorp Vault service for password and tokens.
+        > ⚠️ put `.secrets.*` in your `.gitignore` to avoid it being exposed on public repos but it is your responsibility to keep it safe in your local environment, also the recommendation for production environments is to use the built-in support for Hashicorp Vault service for password and tokens.
 
         ```ini
-        # Secrets doesn't go to public repos
+        # Secrets don't go to public repos
         .secrets.*
         ```
 
-        read more on [Secrets](/secrets/)
+        read more on [Secrets](secrets.md)
 
     === "env vars"
         **Optionally** override any setting using `FLASK_` prefixed environment variables. (`.env` files are also supported)
@@ -225,7 +220,7 @@ pip install dynaconf
 
     ---
 
-    Dynaconf can also **load your Flask extensions** for you see more details in [Flask Extension](/flask/)
+    Dynaconf can also **load your Flask extensions** for you see more details in [Flask Extension](flask.md)
 
 
 ??? "Or using Django"
@@ -244,7 +239,7 @@ pip install dynaconf
     dynaconf init -f yaml
     ```
 
-    Then follow the instructions on terminal.
+    Then follow the instructions on the terminal.
 
     ```plain
     Django app detected
@@ -255,7 +250,7 @@ pip install dynaconf
     🔑 .secrets.yaml created to hold your secrets.
 
     🙈 the .secrets.yaml is also included in `.gitignore`
-    beware to not push your secrets to a public repo
+    beware of not pushing your secrets to a public repo
     or use dynaconf builtin support for Vault Servers.
 
     ⁉  path/to/yourproject/settings.py is found do you want to add dynaconf? [y/N]:
@@ -265,11 +260,11 @@ pip install dynaconf
 
     ```plain
     🎠  Now your Django settings are managed by Dynaconf
-    🎉  Dynaconf is configured! read more on https://dynaconf.com
+    🎉  Dynaconf is configured! read more at https://dynaconf.com
     ```
 
     > ℹ️ On Django the recommended file format is **yaml** because it can hold
-    complex data structures easier, however you can choose to use toml,json,ini or even keep your settings in .py format.
+    complex data structures easier, however, you can choose to use toml, json, ini or even keep your settings in .py format.
 
     === "appname/views.py"
         On your Django views, models and all other places you can now use
@@ -306,12 +301,12 @@ pip install dynaconf
                 - 'server.prod.com'
         ```
 
-        > ℹ️ On Django settings files are layered in multiple environments by default, you can disable it passing `environments=False` to FlaskDynaconf extension.
+        > ℹ️ On Django settings files are layered in multiple environments by default, you can disable it by passing `environments=False` to FlaskDynaconf extension.
 
-        More details in [Settings Files](/settings_files/)
+        More details in [Settings Files](settings_files.md)
 
     === ".secrets.yaml"
-        **Optionally** store sensitive data in a local only file `.secrets.toml`
+        **Optionally** store sensitive data in a local-only file `.secrets.toml`
         ```yaml
         development:
             SECRET_KEY: 43grng9398534nfkjer
@@ -319,14 +314,14 @@ pip install dynaconf
             SECRET_KEY: vfkjndkjg098gdf90gudfsg
         ```
 
-        > ⚠️ put `.secrets.*` in yout `.gitignore` to avoid it to be exposed on public repos but it is your responsibility to keep it safe in your local environment, also the recommendation for production environments is to use the built-in support for Hashicorp Vault service for password and tokens.
+        > ⚠️ put `.secrets.*` in your `.gitignore` to avoid it being exposed on public repos but it is your responsibility to keep it safe in your local environment, also the recommendation for production environments is to use the built-in support for Hashicorp Vault service for password and tokens.
 
         ```ini
-        # Secrets doesn't go to public repos
+        # Secrets don't go to public repos
         .secrets.*
         ```
 
-        read more on [Secrets](/secrets/)
+        read more on [Secrets](secrets.md)
 
     === "env vars"
         **Optionally** override any setting using `DJANGO_` prefixed environment variables. (`.env` files are also supported)
@@ -353,21 +348,21 @@ pip install dynaconf
 
     ---
 
-    More details in [Django Extension](django/)
+    More details in [Django Extension](django.md)
 
 ---
 
 !!! tip
-    The `dynaconf` CLI has more useful commands such as `list | export`, `init`, `write` and `validate` read more on [CLI](/cli/)
+    The `dynaconf` CLI has more useful commands such as `list | export`, `init`, `write` and `validate` read more on [CLI](cli.md)
 
 ## Defining your settings variables
 
-Dynaconf prioritizes the use of [environment variables](/envvars/) and
-you can optionally store settings in [Settings Files](/settings_files/) using any of `toml|yaml|json|ini|py` extension.
+Dynaconf prioritizes the use of [environment variables](envvars.md) and
+you can optionally store settings in [Settings Files](settings_files.md) using any of `toml|yaml|json|ini|py` extension.
 
 ### On env vars
 
-[environment variables](/envvars/) are loaded by Dynaconf if prefixed either with
+[environment variables](envvars.md) are loaded by Dynaconf if prefixed either with
 `DYNACONF_` or a `CUSTOM_` name that you can customize on your settings instance, or
 `FLASK_` and `DJANGO_` respectively if you are using extensions.
 
@@ -393,7 +388,7 @@ export DYNACONF_NESTED__LEVEL__KEY=1         # Double underlines
                                              # }
 ```
 
-More details on [environment variables](/envvars/).
+More details on [environment variables](envvars.md).
 
 ### On files
 
@@ -403,6 +398,11 @@ mixed settings formats across your application.
 
 #### Supported formats
 
+Create your settings in the desired format and specify it on `settings_files`
+argument on your dynaconf instance or pass it in `-f <format>` if using `dynaconf init` command.
+
+The following are the currently supported formats:
+
 - **.toml** - Default and **recommended** file format.
 - **.yaml|.yml** - Recommended for Django applications.
 - **.json** - Useful to reuse existing or exported settings.
@@ -410,19 +410,22 @@ mixed settings formats across your application.
 - **.py** - **Not Recommended** but supported for backwards compatibility.
 - **.env** - Useful to automate the loading of environment variables.
 
-!!! info
-    Create your settings in desired format and specify it on `settings_files`
-    argument on your dynaconf instance or pass it in `-f <format>` if using `dynaconf init` command.
-
 !!! tip
     Can't find the file format you need for your settings?
     You can create your custom loader and read any data source.
-    read more on [extending dynaconf](/advanced/)
+    read more on [extending dynaconf](advanced.md)
+
+#### Key types
+
+Dynaconf will try to preserve non-string integers such as `1: foo` in yaml,
+or arbitrary types defined within python, like `settings.set("a", {1: "b", (1,2): "c"})`.
+
+This is intended for special cases only, as envvars and most file loaders won't support non-string key types.
 
 #### Reading settings from files
 
 On files by default dynaconf loads all the existing keys and sections
-as first level settings.
+as first-level settings.
 
 === "settings.toml"
     ```toml
@@ -458,12 +461,12 @@ settings.name == "Bruno"
 
 #### Layered environments on files
 
-It is also possible to make dynaconf to read the files separated by layered
-environments so each section or first level key is loaded as a
+It is also possible to make dynaconf read the files separated by layered
+environments so each section or first-level key is loaded as a
 distinct environment.
 
 !!! warning
-    To enable layered environments the argument `environments` must be set to `True`, otherwise dynaconf will ignore layers and read all first level keys as normal values.
+    To enable layered environments the argument `environments` must be set to `True`, otherwise, dynaconf will ignore layers and read all first-level keys as normal values.
 
 === "config.py"
     ```py
@@ -516,7 +519,7 @@ distinct environment.
     ```
 
 
-> ℹ️ You can define custom environment using the name you want
+> ℹ️ You can define a custom environment using the name you want
 `[default]` and `[global]` are the only environments that are special.
 You can for example name it `[testing]` or `[anything]`
 
@@ -547,7 +550,7 @@ You can for example name it `[testing]` or `[anything]`
     `env="development"` to `Dynaconf` class on instantiation.
 
 
-Read more on [Settings Files](/settings_files/)
+Read more on [Settings Files](settings_files.md)
 
 ## Reading settings variables
 
@@ -570,12 +573,25 @@ settings.databases.name == "mydb"             # Nested keys traversing
 settings['password'] == "secret123"           # dict like item access
 settings['databases.schema'] == "main"        # Nested items traversing
 settings.get("nonexisting", "default value")  # Default values just like a dict
-settings("number", cast=int)                  # customizable forcing of casting
+settings("number", cast="@int")                  # customizable forcing of casting
 
 for key, value in settings.items():           # dict like iteration
     print(key, value)
 ```
 
+## Spaces in keys
+
+If the key has spaces it can be accessed by replacing the space with an underscore.
+
+```yaml
+ROOT:
+    MY KEY: "value"
+```
+
+```python
+settings.root.my_key == "value"
+settings.root["my key"] == "value"
+```
 ## Validating your settings
 
 Dynaconf offers the `Validator` object for you to define rules for
@@ -600,13 +616,13 @@ validate your settings in 2 ways.
     Once passed in on `validators` argument, Dynaconf will evaluate each of
     the rules before your settings are first read.
 
-    Alternative way is registering validators using.
+    An alternative way is registering validators using.
 
     ```py
     settings.validators.register(Validator("field", **rules))
     ```
 
-    You can also force the earlier validation placing a call to `validate`
+    You can also force the earlier validation by making a call to `validate`
     after your settings instantiation.
 
     ```py
@@ -617,7 +633,7 @@ validate your settings in 2 ways.
 
 ??? "Writing Validators as a toml file"
 
-    You can also alternativelly place a `dynaconf_validators.toml` file in the
+    You can also alternatively place a `dynaconf_validators.toml` file in the
     root of your project.
 
     ```toml
@@ -626,19 +642,19 @@ validate your settings in 2 ways.
     port = {gte=5000, lte=9000}
     ```
 
-    Following the same rules used in the `Validator` class, then you can trigger the validation via command line using.
+    Following the same rules used in the `Validator` class, then you can trigger the validation via the command line using.
 
     ```bash
     dynaconf -i config.settings validate
     ```
 
-Read more on [Validation](/validation/)
+Read more on [Validation](validation.md)
 
 ## Dependencies
 
 ### Vendored
 
-Dynaconf core has no dependency it is using vendored copies of external
+Dynaconf core has no dependency. It uses vendored copies of external
 libraries such as **python-box, click, python-dotenv, ruamel-yaml, python-toml**
 
 ### Optional dependencies
@@ -658,7 +674,7 @@ pip install dynaconf[vault]
 pip install dynaconf[redis]
 ```
 
-Read more on [external loaders](/advanced/#creating-new-loaders)
+Read more on [external loaders](advanced.md#creating-new-loaders)
 
 ## License
 
@@ -668,3 +684,4 @@ This project is licensed under the terms of the MIT license.
 
 
 If you are looking for something similar to Dynaconf to use in your Rust projects: https://github.com/rubik/hydroconf
+

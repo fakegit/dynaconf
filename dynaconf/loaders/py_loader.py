@@ -1,53 +1,91 @@
+from __future__ import annotations
+
 import errno
 import importlib
 import inspect
-import io
 import types
 from contextlib import suppress
 from pathlib import Path
 
 from dynaconf import default_settings
+from dynaconf.loaders.base import SourceMetadata
 from dynaconf.utils import DynaconfDict
 from dynaconf.utils import object_merge
 from dynaconf.utils import upperfy
 from dynaconf.utils.files import find_file
+from dynaconf.utils.functional import empty
 
 
-def load(obj, settings_module, identifier="py", silent=False, key=None):
-    """Tries to import a python module"""
+def load(
+    obj,
+    settings_module,
+    identifier="py",
+    silent=False,
+    key=None,
+    validate=False,
+):
+    """
+    Tries to import a python module
+
+    Notes:
+        It doesn't handle environment namespaces explicitly. Eg
+            [default], [development], etc
+        See tests/test_nested_loading.py sample python file
+    """
     mod, loaded_from = get_module(obj, settings_module, silent)
     if not (mod and loaded_from):
         return
-    load_from_python_object(obj, mod, settings_module, key, identifier)
+
+    # setup SourceMetadata (for inspecting)
+    if isinstance(identifier, SourceMetadata):
+        loader_identifier = SourceMetadata(
+            identifier.loader, mod.__name__, identifier.env
+        )
+    else:
+        loader_identifier = SourceMetadata(identifier, mod.__name__, "global")
+
+    load_from_python_object(
+        obj, mod, settings_module, key, loader_identifier, validate=validate
+    )
 
 
 def load_from_python_object(
-    obj, mod, settings_module, key=None, identifier=None
+    obj, mod, settings_module, key=None, identifier=None, validate=False
 ):
-    file_merge = getattr(mod, "dynaconf_merge", False) or getattr(
-        mod, "DYNACONF_MERGE", False
-    )
+    config = obj.__core__.config
+    file_merge = getattr(mod, "dynaconf_merge", empty)
+    if file_merge is empty:
+        file_merge = getattr(mod, "DYNACONF_MERGE", empty)
+
     for setting in dir(mod):
+        setting_value = getattr(mod, setting)
         # A setting var in a Python file should start with upper case
         # valid: A_value=1, ABC_value=3 A_BBB__default=1
         # invalid: a_value=1, MyValue=3
         # This is to avoid loading functions, classes and built-ins
         if setting.split("__")[0].isupper():
             if key is None or key == setting:
-                setting_value = getattr(mod, setting)
                 obj.set(
                     setting,
                     setting_value,
                     loader_identifier=identifier,
                     merge=file_merge,
+                    validate=validate,
                 )
-
-    obj._loaded_py_modules.append(mod.__name__)
-    obj._loaded_files.append(mod.__file__)
+        # if setting (name) starts with _dynaconf_hook
+        # and the value is a callable
+        # then we want to add it to the post_hooks list on the obj
+        # we use the name instead checking on an attribute to avoid
+        # loading a lazy object early in the process
+        elif setting.startswith("_dynaconf_hook") and callable(setting_value):
+            if setting_value not in config.post_hooks:
+                config.post_hooks.append(setting_value)
+    config.loaded_py_modules.append(mod.__name__)
+    config.loaded_files.append(mod.__file__)
 
 
 def try_to_load_from_py_module_name(
-    obj, name, key=None, identifier="py", silent=False
+    obj, name, key=None, identifier="py", silent=False, validate=False
 ):
     """Try to load module by its string name.
 
@@ -62,9 +100,17 @@ def try_to_load_from_py_module_name(
     """
     ctx = suppress(ImportError, TypeError) if silent else suppress()
 
+    # setup SourceMetadata (for inspecting)
+    if isinstance(identifier, SourceMetadata):
+        loader_identifier = identifier
+    else:
+        loader_identifier = SourceMetadata(identifier, name, "global")
+
     with ctx:
         mod = importlib.import_module(str(name))
-        load_from_python_object(obj, mod, name, key, identifier)
+        load_from_python_object(
+            obj, mod, name, key, loader_identifier, validate=validate
+        )
         return True  # loaded ok!
     # if it reaches this point that means exception occurred, module not found.
     return False
@@ -108,14 +154,14 @@ def import_from_filename(obj, filename, silent=False):  # pragma: no cover
     mod._is_error = False
     mod._error = None
     try:
-        with io.open(
+        with open(
             _find_file(filename),
             encoding=default_settings.ENCODING_FOR_DYNACONF,
         ) as config_file:
             exec(compile(config_file.read(), filename, "exec"), mod.__dict__)
-    except IOError as e:
+    except OSError as e:
         e.strerror = (
-            f"py_loader: error loading file " f"({e.strerror} {filename})\n"
+            f"py_loader: error loading file ({e.strerror} {filename})\n"
         )
         if silent and e.errno in (errno.ENOENT, errno.EISDIR):
             return
@@ -136,7 +182,7 @@ def write(settings_path, settings_data, merge=True):
         existing = DynaconfDict()
         load(existing, str(settings_path))
         object_merge(existing, settings_data)
-    with io.open(
+    with open(
         str(settings_path),
         "w",
         encoding=default_settings.ENCODING_FOR_DYNACONF,

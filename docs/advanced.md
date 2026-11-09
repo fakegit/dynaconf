@@ -1,6 +1,6 @@
-# advanced usage
+# Advanced Usage
 
-## Hooks 
+## Hooks
 
 > **NEW** in version 3.1.6
 
@@ -26,7 +26,7 @@ if DEBUG:
 ```py
 from dynaconf import Dynaconf
 settings = Dynaconf(
-    preload=['plugin_settings.py'], 
+    preload=['plugin_settings.py'],
     settings_file="settings.py"
 )
 ```
@@ -37,11 +37,20 @@ before the `app.py` is fully loaded.
 
 ### Hooks for the solution
 
-In the same path of any settings file, you can create a `dynaconf_hooks.py` file
-this file will be loaded after all the settings files are loaded.
+A hook is basically a function that takes an optional read-only `settings`
+positional argument and return data to be merged on the Settings object.
 
-`dynaconf_hooks.py`
+There are two ways to add hooks: from special modules or directly in a Dynaconf
+instantiation.
+
+#### Module approach
+
+With the module approach, you can create a `dynaconf_hooks.py` file in the same
+path as any settings file. Then, the hooks from this module will be loaded
+after the regular loading process.
+
 ```py
+# dynaconf_hooks.py
 
 def post(settings):
     data = {"dynaconf_merge": True}
@@ -54,19 +63,338 @@ def post(settings):
 Dynaconf will execute the `post` function and will merge the returned data with
 the existing settings.
 
-To disable the merging of the data, you can set the `dynaconf_merge` to False.
+#### Instance approach
+
+With the instance approach, just add your hook function to Dynaconf `post_hook`
+initialization argument. It accepts a single `Callable` or a list of `Callable`
+
+```python
+def hook_function(settings):
+    data = {"dynaconf_merge": True}
+    if settings.DEBUG:
+        data["DATABASE_URL"] = "sqlite://"
+    return data
+
+settings = Dynaconf(post_hooks=hook_function)
+```
 
 You can also set the merging individually for each settings variable as seen on
-[merging](/merging/) documentation.
+[merging](merging.md) documentation.
+
+
+#### Decorator approach
+
+**new in 3.2.8**
+
+When the settings file is a Python file, you can also use a decorator to define hooks.
+
+```python
+from dynaconf import Dynaconf
+
+settings = Dynaconf(settings_file="settings.py")
+```
+
+```python title="settings.py"
+from dynaconf import post_hook
+
+VARIABLE = "value"
+# all regular settings here
+...
+
+@post_hook
+def set_debugging_database_url(settings):
+    data = {}
+    if settings.DEBUG:
+        data["DATABASE_URL"] = "sqlite://"
+    return data
+```
+
+Dynaconf will collect the decorated functions and execute them after the settings file is loaded.
+
+The hook decorator can only be applied to functions that are defined withing the same settings file, in the
+need to use external functions, wrap it in a local decorated function.
+
+When using `load_file` to load a python file, hooks will also be collected and immediately executed after the file is loaded, unless the `run_hooks` argument is set to `False`, this is useful when calling `load_file` multiple times and have the hooks to be all executed together at a certain point later.
+
+`execute_instance_hooks` helper method is also available to trigger execution of collected hooks, but usually not
+needed because a common pattern is to call the latest `load_file` with `run_hooks=True` to trigger all hooks at once.
+
+Notice that load_file will execute all collected hooks that have not been called yet, it does not execute hooks that have already been called (unless the hook itself is marked as `_called=False`). This is useful when you want to reload a file and re-execute hooks.
+
+## Inspecting History
+
+> **NEW** in version 3.2.0
+
+!!! warning
+    This feature is in **tech preview** the usage interface and output format is
+    subject to change.
+
+This feature purpose is to allow tracking any config-data loading history, that is, the loading steps that lead to a given final value. It can return a dict data report, print to `stdout` or write to a file, and is also available as a [CLI command](cli.md#dynaconf-inspect-tech-preview).
+
+It works by setting a *SourceMetadata* object to every ingested data, so it can be recovered and filtered to generate meaningful reports. The properties of this object are:
+
+- **loader**: the loader type *(e.g, yaml, envvar, validation_default)*
+- **identifier**: specific identifier *(e.g, filename for files)*
+- **env**: which environ this data belongs to *(global, main, development, etc)*
+- **merged**: if this data has been merged *(True or False)*
+
+Dynaconf offers two very similar utility functions to get data from it: `inspect_settings` and `get_history`. The difference is that `get_history` returns a simple list of dict-records with source metadata, while `inspect_settings` focus on generating a printable report (and thus it offers some convenience options for that).
+
+They are available at `dynaconf.inspect_settings` and `dynaconf.get_history`
+
+### `inspect_settings`
+
+By default, it only returns a dict-report. You can optionally print the report in a specific format, such as "yaml" or "json", or write it to a file:
+
+```python
+# default: returns python object
+>>> inspect_settings(settings_obj)
+{
+	"header": ... # filtering options used
+	"current": ... # currently active data/value
+	"history": ... # list of history records
+}
+
+# print report
+>>> inspect_settings(setting_obj, print_report=True, dumper="yaml")
+header:
+  - ...
+current:
+  - ...
+history:
+  - ...
+
+# write to file
+>>> inspect_settings(settings_obj, to_file="report.yaml", dumper="json")
+```
+
+The history looks like this:
+
+```python
+>>> inspect_settings(
+>>> 	settings_obj,
+>>> 	key="foo",
+>>> 	print_report=True,
+>>> 	dumper="yaml"
+>>> )
+>>>
+
+header:
+- ...
+current:
+- ...
+history:
+- loader: env_global
+  identifier: unique
+  env: global
+  merged: false
+  value: FOO
+- loader: toml
+  identifier: path/to/file.yaml
+  env: development
+  merged: false
+  value: FOO
+```
+
+<h4>Options Overview</h4>
+
+There are some pre-defined ways that you can filter and customize the report.
+Here is a summary of the available argument options:
+
+Positional:
+
+- `settings` (required): A Dynaconf instance
+- `key`: Filter by this key. E.g "path.to.key"
+- `env`: Filter by this env. E.g "production"
+
+Kwargs-only:
+
+- `new_first`: If True, uses newest to oldest loading order.
+- `history_limit`: Limits how many entries are shown. By default, show all.
+- `include_internal`: If True, include internal loaders (e.g. defaults). This has effect only if key is not provided.
+- `to_file`: If specified, write dumped report to this filename.
+- `print_report`: If true, prints the dumped report to stdout.
+- `dumper`: Accepts preset strings (e.g. "yaml", "json") or custom dumper callable ``(dict, TextIO) -> None``. If not provided, does nothing.
+- `report_builder`: If provided, it is used to generate the report dict.
+
+### `get_history`
+
+Returns a list of history-records (the same as in the `history` key of `inspect_settings` records. In fact, `inspect_settings` uses `get_history`, so this is just available if your main goal is to use the data directly. It offer some basic filtering capabilities, but it is assumed that if you choose to use this you'll probably want to process and filter the data by your own.
+
+
+### `get_debug_info`
+
+Returns a dictionary containing debug information about the settings object. This information includes the current environment, the settings file, the loaders, and the history of the settings object.
+
+```python
+from dynaconf.utils.inspect_settings import get_debug_info
+get_debug_info(settings.DYNACONF, verbosity=0, key="data")
+# result
+{'core_loaders': [],
+ 'environments': ['development', 'production'],
+ 'history': [{'data': {}, 'identifier': 'init_kwargs', 'loader': 'set_method'},
+             {'data': {},
+              'identifier': 'default_settings',
+              'loader': 'set_method'},
+             {'data': {},
+              'identifier': 'envvars_first_load',
+              'loader': 'set_method'},
+             {'data': {},
+              'identifier': 'settings_module_method',
+              'loader': 'set_method'},
+             {'data': {'data': [0]},
+              'identifier': '/etc/app/defaults.py',
+              'loader': 'py'},
+             {'data': {'data': '@merge 7,8,9'},
+              'identifier': '/etc/app/settings.yaml',
+              'loader': 'yaml'},
+ 'loaded_envs': ["development"],
+ 'loaded_files': ['/etc/app/defaults.py',
+                  '/etc/app/settings.yaml'],
+ 'loaded_hooks': [],
+ 'post_hooks': [],
+ 'root_path': '/run/app',
+ 'validators': [],
+ 'versions': {'django': '4.2.16', 'dynaconf': '3.2.8.dev0'}}
+```
+
+
+## Update dynaconf settings using command-line arguments (cli)
+
+Dynaconf is designed to load the settings file and, when applicable, prioritize overrides from envvar.
+
+The following examples demonstrate the process of incorporating command-line arguments to update the Dynaconf settings, ensuring that the CLI input takes precedence over both the settings.toml file and environment variables.
+
+### Command-line arguments using argparse
+
+This illustration showcases the utilization of Python's `argparse` module to exemplify the creation of a command-line interface (CLI) capable of overriding the settings.toml file and environment variables.
+
+`app.py`
+```py
+from __future__ import annotations
+
+from dynaconf import settings
+
+import argparse
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(
+        description="Simple argparse example for overwrite dynaconf settings"
+    )
+
+    parser.add_argument("--env", default=settings.current_env)
+    parser.add_argument("--host", default=settings.HOST)
+    parser.add_argument("--port", default=settings.PORT)
+
+    options, args = parser.parse_known_args(argv)
+
+    # change the environment to update proper settings
+    settings.setenv(options.env)
+
+    # update the dynaconfig settings
+    settings.update(vars(options))
+
+    #
+
+if __name__ == "__main__":
+    main(argv=None)
+```
+
+
+### Command-line arguments using click
+
+This illustration showcases the utilization of Python's `click` module to exemplify the creation of a command-line interface (CLI) capable of overriding the settings.toml file and environment variables.
+
+`app.py`
+```py
+from __future__ import annotations
+
+from dynaconf import settings
+
+import click
+
+
+@click.command()
+@click.option("--host", default=settings.HOST, help="Host")
+@click.option("--port", default=settings.PORT, help="Port")
+@click.option("--env", default=settings.current_env, help="Env")
+def app(host, port, env):
+    """Simple click example for overwrite dynaconf settings"""
+
+    # change the environment to update proper settings
+    settings.setenv(env)
+
+    # update the dynaconfig settings
+    settings.update({"host": host, "port": port})
+
+if __name__ == "__main__":
+    app()
+```
+
+Alternatively you can use a more generic approach using `**options` and passing `options` to dynaconf
+
+`app.py`
+```py
+from __future__ import annotations
+
+from dynaconf import settings
+
+import click
+
+
+@click.command()
+@click.option("--host", default=settings.HOST, help="Host")
+@click.option("--port", default=settings.PORT, help="Port")
+@click.option("--env", default=settings.current_env, help="Env")
+def app(**options):
+    """Simple click example for overwrite dynaconf settings"""
+
+    # change the environment to update proper settings
+    settings.setenv(options['env'])
+
+    # update the dynaconfig settings
+    settings.update(options)
+
+if __name__ == "__main__":
+    app()
+```
 
 ## Programmatically loading a settings file
 
+You can load files from within a python script.
+
+When using relative paths, it will use `root_path` as its basepath.
+Learn more about how `root_path` fallback works [here](configuration.md#root_path).
+
 ```python
-from dynaconf import settings
-settings.load_file(path="/path/to/file.toml")  # list or `;/,` separated allowed
+from dynaconf import Dynaconf
+
+settings = Dynaconf()
+
+# single file
+settings.load_file(path="/path/to/file.toml")
+
+# list
+settings.load_file(path=["/path/to/file.toml", "/path/to/another-file.toml"])
+
+# separated by ; or ,
+settings.load_file(path="/path/to/file.toml;/path/to/another-file.toml")
 ```
 
-> **NOTE**: programmatically loaded file is not persisted, once `env` is changed via `setenv|ugin_env`, or a `reload` or `configure` is invoked it will be cleaned, to persist it needs to go to `INCLUDES_FOR_DYNACONF` variable or you need to load it programmatically again.
+Notice that data loaded by this method is not persisted.
+
+Once `env` is changed via `setenv|using_env`, `reload` or `configure` invocation, its loaded data
+will be cleaned. To persist consider using `INCLUDES_FOR_DYNACONF` variable or assuring it will
+be loaded programmatically again.
+
+**new in 3.2.7**
+
+- Calls to `load_file` will be recorded on the inspect history and include module and line number.
+
+**new in 3.2.11**
+
+- load_file with `env=False` will load the file bypassing the environment, forcing the envless mode and loading the whole top level variables of the file.
 
 
 ## Prefix filtering
@@ -83,7 +411,7 @@ from dynaconf.strategies.filtering import PrefixFilter
 
 settings = Dynaconf(
     settings_file="settings.toml",
-    environments=False
+    environments=False,
     filter_strategy=PrefixFilter("prefix")
 )
 ```
@@ -158,16 +486,19 @@ def load(
         logger.warning(f"SOPS error: {_output.stderr}")
     decrypted_config = yaml.load(_output.stdout, Loader=yaml.CLoader)
 
+    # support for inspecting
+    source_metadata = SourceMetadata('sops', sops_file, env)
+
     if key:
         value = decrypted_config.get(key.lower())
-        obj.set(key, value)
+        obj.set(key, value, loader_identifier=source_metadata)
     else:
-        obj.update(decrypted_config)
+        obj.update(decrypted_config, loader_identifier=source_metadata)
 
     obj._loaded_files.append(sops_file)
 ```
 
-See more [example/custom_loader](https://github.com/rochacbruno/dynaconf/tree/master/example/custom_loader)
+See more [tests_functional/custom_loader](https://github.com/dynaconf/dynaconf/tree/master/tests_functional/custom_loader)
 
 ## Module impersonation
 
@@ -267,7 +598,7 @@ all_settings = settings.from_env('development', keep=True).from_env('other', kee
 
 The variables from [development] are loaded keeping pre-loaded values, then the variables from [other] are loaded keeping pre-loaded from [development] and overriding it.
 
-It is also possible to pass additional [configuration](/configuration/) variables to `from_env` method.
+It is also possible to pass additional [configuration](configuration.md) variables to `from_env` method.
 
 ```py
 new_settings = settings.from_env('production', keep=True, SETTINGS_FILE_FOR_DYNACONF='another_file_path.yaml')
@@ -344,9 +675,18 @@ assert obj.VALUE == 42.1  # AttributeError
 
 ```
 
+**new in 3.2.7**
+- `populate_obj` will take `internals` boolean to enable or disable populating internal settings.
+
+
+**new in 3.2.8**
+
+- `populate_obj` will take `convert_to_dict` boolean to enable or disable converting the settings object to a dict before populating the object, this makes the data structures like Box and BoxList to be converted to the raw dict/list before populating the object.
+
+
 ## Exporting
 
-You can generate a file with current configs by calling `dynaconf list -o /path/to/file.ext` see more in [cli](/cli/)
+You can generate a file with current configs by calling `dynaconf list -o /path/to/file.ext` see more in [cli](cli.md)
 
 You can also do that programmatically with:
 
@@ -356,7 +696,7 @@ from dynaconf import settings
 from dynaconf.utils.boxing import DynaBox
 
 # generates a dict with all the keys for `development` env
-data = settings.as_dict(env='development')
+data = settings.to_dict(env='development')
 
 # writes to a file, the format is inferred by extension
 # can be .yaml, .toml, .ini, .json, .py
@@ -383,7 +723,7 @@ settings = Dynaconf(
 
 ## Testing
 
-For testing it is recommended to just switch to `testing` environment and read the same config files.
+For testing it is recommended to just switch to the `testing` environment and read the same config files.
 
 `settings.toml`
 ```toml
@@ -405,21 +745,39 @@ print(settings.VALUE)
 ENV_FOR_DYNACONF=testing python program.py
 ```
 
-Then your `program.py` will print `"On Testing"` red from `[testing]` environment.
+Then your `program.py` will print `"On Testing"`, read from `[testing]` environment.
 
 
 ### Pytest
 
-For pytest it is common to create fixtures to provide pre-configured settings object or to configure the settings before
+For pytest it is common to create fixtures to provide pre-configured settings objects or to configure the settings before
 all the tests are collected.
 
-Examples available on [https://github.com/rochacbruno/dynaconf/tree/master/example/pytest_example](https://github.com/rochacbruno/dynaconf/tree/master/example/pytest_example)
+Examples are available [here](https://github.com/dynaconf/dynaconf/tree/master/tests_functional/legacy/pytest_example_app).
 
 With `pytest` fixtures it is recommended to use the `FORCE_ENV_FOR_DYNACONF` instead of just `ENV_FOR_DYNACONF` because it has precedence.
 
+#### Configure Dynaconf with Pytest
+
+Define your `root_path`
+
+```py
+import os
+
+from dynaconf import Dynaconf
+
+current_directory = os.path.dirname(os.path.realpath(__file__))
+
+settings = Dynaconf(
+    root_path=current_directory, # defining root_path
+    envvar_prefix="DYNACONF",
+    settings_files=["settings.toml", ".secrets.toml"],
+)
+```
+
 #### A python program
 
-`settings.toml` with the `[testing]` environment.
+`settings.toml` with the `[testing]` environment:
 
 ```toml
 [default]
@@ -429,7 +787,7 @@ VALUE = "On Default"
 VALUE = "On Testing"
 ```
 
-`app.py` that reads that value from current environment.
+`app.py` that reads that value from current environment:
 ```py
 from dynaconf import settings
 
@@ -438,7 +796,7 @@ def return_a_value():
     return settings.VALUE
 ```
 
-`tests/conftest.py` with a fixture to force `settings` to run pointing to `[testing]` environment.
+`tests/conftest.py` with a fixture to force `settings` to run pointing to `[testing]` environment:
 
 ```py
 import pytest
@@ -450,7 +808,7 @@ def set_test_settings():
     settings.configure(FORCE_ENV_FOR_DYNACONF="testing")
 ```
 
-`tests/test_dynaconf.py` to assert that the correct environment is loaded
+`tests/test_dynaconf.py` to assert that the correct environment is loaded:
 
 ```py
 from app import return_a_value
@@ -462,7 +820,7 @@ def test_dynaconf_is_in_testing_env():
 
 #### A Flask program
 
-`settings.toml` with the `[testing]` environment.
+`settings.toml` with the `[testing]` environment:
 
 ```toml
 [default]
@@ -472,7 +830,7 @@ VALUE = "On Default"
 VALUE = "On Testing"
 ```
 
-`src.py` that has a Flask application factory
+`src.py` that has a Flask application factory:
 
 ```py
 from flask import Flask
@@ -487,7 +845,7 @@ def create_app(**config):
 ```
 
 `tests/conftest.py` with a fixture to provide `app` dependency injection to all the tests,
-And force this `app` to point to `[testing]` config environment.
+and force this `app` to point to `[testing]` config environment:
 
 ```py
 import pytest
@@ -500,7 +858,7 @@ def app():
     return app
 ```
 
-`tests/test_flask_dynaconf.py` to assert that the correct environment is loaded
+`tests/test_flask_dynaconf.py` to assert that the correct environment is loaded:
 
 ```py
 def test_dynaconf_is_on_testing_env(app):
@@ -510,7 +868,7 @@ def test_dynaconf_is_on_testing_env(app):
 
 ### Mocking
 
-But it is common in unit tests to `mock` some objects and you may need in rare cases to mock the `dynaconf.settings` when running your tests.
+It is common in unit tests to `mock` some objects, and you may need in rare cases to mock the `dynaconf.settings` when running your tests:
 
 ```python
 from dynaconf.utils import DynaconfDict

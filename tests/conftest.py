@@ -1,10 +1,24 @@
+from __future__ import annotations
+
 import copy
 import os
 import sys
+import warnings
+from pathlib import Path
+from textwrap import dedent
 
 import pytest
 
 from dynaconf.base import LazySettings
+
+
+@pytest.fixture
+def no_deprecations():
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "error", category=DeprecationWarning, module="dynaconf"
+        )
+        yield
 
 
 @pytest.fixture(scope="module")
@@ -39,6 +53,18 @@ def settings():
     return sets
 
 
+@pytest.fixture
+def create_file(tmp_path):
+    # TODO @pbrochad: refactor all create_file utils scattered around to use this
+    # https://github.com/dynaconf/dynaconf/issues/todo
+    def _create_file(filename: str, data: str) -> Path:
+        filepath = tmp_path / filename
+        filepath.write_text(dedent(data))
+        return filepath
+
+    return _create_file
+
+
 @pytest.fixture(scope="module")
 def testdir():
     return os.path.dirname(os.path.abspath(__file__))
@@ -47,16 +73,18 @@ def testdir():
 # each test runs on cwd to its temp dir
 @pytest.fixture(autouse=True)
 def go_to_tmpdir(request):
-
     # Get the fixture dynamically by its name.
     tmpdir = request.getfixturevalue("tmpdir")
     tmpdir.join(".env").write("DYNACONF_TESTING=true\n")
+
     # ensure local test created packages can be imported
+    sys_path_bak = copy.deepcopy(sys.path)
     sys.path.insert(0, str(tmpdir))
 
     # Chdir only for the duration of the test.
     with tmpdir.as_cwd():
         yield
+    sys.path = sys_path_bak.copy()
 
 
 @pytest.fixture(scope="module")

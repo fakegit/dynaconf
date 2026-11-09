@@ -1,0 +1,116 @@
+name: Publish
+
+on:
+  push:
+    tags:
+      - "[0-9]+.[0-9]+.[0-9]+"
+  workflow_dispatch:
+    inputs:
+      release-tag:
+        description: "Release tag to publish (e.g. 3.2.5)"
+        required: true
+        type: string
+
+jobs:
+  validate:
+    name: "Validate publication"
+    runs-on: ubuntu-latest
+    outputs:
+      is-latest: ${{ steps.is-latest.outputs.value }}
+      release-type: ${{ steps.release-type.outputs.value }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: master
+          fetch-depth: 0
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.2.0
+
+      - name: Install release tools
+        run: make install GROUP=release
+
+      - name: Detect release type
+        id: release-type
+        run: |
+          INPUT_TAG="${{ inputs.release-tag || github.ref_name }}"
+          TYPE=$(release-utility get release-type "$INPUT_TAG")
+          echo "value=$TYPE" >> "$GITHUB_OUTPUT"
+
+      - name: Check out release tag
+        run: |
+          INPUT_TAG="${{ inputs.release-tag || github.ref_name }}"
+          git checkout "$INPUT_TAG"
+
+      - name: Validate release
+        run: |
+          INPUT_TAG="${{ inputs.release-tag || github.ref_name }}"
+          if [[ "${{ steps.release-type.outputs.value }}" == "backport" ]]; then
+            release-utility validate --pre-publish --backport "$INPUT_TAG"
+          else
+            release-utility validate --pre-publish "$INPUT_TAG"
+          fi
+
+      - name: Check if latest release
+        id: is-latest
+        run: |
+          INPUT_TAG="${{ inputs.release-tag || github.ref_name }}"
+          VALUE=$(release-utility get is-latest "$INPUT_TAG")
+          echo "value=$VALUE" >> "$GITHUB_OUTPUT"
+
+  build-dist:
+    name: "Build distribution"
+    needs: [validate]
+    uses: ./.github/workflows/build-dist.yml
+    with:
+      release-tag: ${{ inputs.release-tag || github.ref_name }}
+
+  publish-pypi:
+    name: "Publish to PyPI"
+    needs: [validate, build-dist]
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/dynaconf
+    permissions:
+      id-token: write
+    steps:
+      - name: Download distribution
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ needs.build-dist.outputs.dist-artifact }}
+          path: dist
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+
+  publish-github:
+    name: "Create GitHub Release"
+    needs: [validate, publish-pypi]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.release-tag || github.ref_name }}
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.2.0
+
+      - name: Generate release notes
+        run: make release-notes > release-notes.md
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v3
+        with:
+          body_path: release-notes.md
+          tag_name: ${{ inputs.release-tag || github.ref_name }}
+
+  publish-docs:
+    name: "Publish documentation"
+    if: needs.validate.outputs.release-type != 'backport' && needs.validate.outputs.is-latest == 'true'
+    needs: [validate, publish-pypi]
+    uses: ./.github/workflows/publish-docs.yml
+    with:
+      release-tag: ${{ inputs.release-tag || github.ref_name }}
+    secrets: inherit

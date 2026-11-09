@@ -1,12 +1,12 @@
-[![Dynaconf](docs/img/logo_400.svg?sanitize=true)](http://dynaconf.com)
+<!-- [![Dynaconf](docs/img/logo_400.svg?sanitize=true)](http://dynaconf.com) -->
+
+<p align="center"><img src="/art/header.png?v2" alt="dynaconf. new logo"></p>
 
 > **dynaconf** - Configuration Management for Python.
 
-[![MIT License](https://img.shields.io/badge/license-MIT-007EC7.svg?style=flat-square)](/LICENSE) [![PyPI](https://img.shields.io/pypi/v/dynaconf.svg)](https://pypi.python.org/pypi/dynaconf) [![PyPI](https://img.shields.io/pypi/pyversions/dynaconf.svg)]() ![PyPI - Downloads](https://img.shields.io/pypi/dm/dynaconf.svg?label=pip%20installs&logo=python) [![CI](https://github.com/rochacbruno/dynaconf/actions/workflows/main.yml/badge.svg)](https://github.com/rochacbruno/dynaconf/actions/workflows/main.yml) [![codecov](https://codecov.io/gh/rochacbruno/dynaconf/branch/master/graph/badge.svg)](https://codecov.io/gh/rochacbruno/dynaconf) [![Codacy Badge](https://app.codacy.com/project/badge/Grade/42d2f11ef0a446808b246c8c69603f6e)](https://www.codacy.com/gh/rochacbruno/dynaconf/dashboard?utm_source=github.com&amp;utm_medium=referral&amp;utm_content=rochacbruno/dynaconf&amp;utm_campaign=Badge_Grade) ![GitHub issues](https://img.shields.io/github/issues/rochacbruno/dynaconf.svg) ![GitHub stars](https://img.shields.io/github/stars/rochacbruno/dynaconf.svg) ![GitHub Release Date](https://img.shields.io/github/release-date/rochacbruno/dynaconf.svg) ![GitHub commits since latest release](https://img.shields.io/github/commits-since/rochacbruno/dynaconf/latest.svg) ![GitHub last commit](https://img.shields.io/github/last-commit/rochacbruno/dynaconf.svg) [![Code Style Black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/ambv/black/) [![Discussion](https://img.shields.io/badge/chat-discussions-blue.svg?logo=googlechat)](https://github.com/rochacbruno/dynaconf/discussions) [![Discussion](https://img.shields.io/badge/demo-learn-yellow.svg?logo=gnubash)](https://github.com/rochacbruno/learndynaconf)
+[![MIT License](https://img.shields.io/badge/license-MIT-007EC7.svg?style=flat-square)](/LICENSE) [![PyPI](https://img.shields.io/pypi/v/dynaconf.svg)](https://pypi.python.org/pypi/dynaconf) [![PyPI](https://img.shields.io/pypi/pyversions/dynaconf.svg)]() ![PyPI - Downloads](https://img.shields.io/pypi/dm/dynaconf.svg?label=pip%20installs&logo=python) [![CI](https://github.com/dynaconf/dynaconf/actions/workflows/main.yml/badge.svg)](https://github.com/dynaconf/dynaconf/actions/workflows/main.yml) [![codecov](https://codecov.io/gh/dynaconf/dynaconf/branch/master/graph/badge.svg)](https://codecov.io/gh/dynaconf/dynaconf) [![Codacy Badge](https://app.codacy.com/project/badge/Grade/3fb2de98464442f99a7663181803b400)](https://www.codacy.com/gh/dynaconf/dynaconf/dashboard?utm_source=github.com&amp;utm_medium=referral&amp;utm_content=dynaconf/dynaconf&amp;utm_campaign=Badge_Grade)  ![GitHub stars](https://img.shields.io/github/stars/dynaconf/dynaconf.svg) ![GitHub Release Date](https://img.shields.io/github/release-date/dynaconf/dynaconf.svg) ![GitHub commits since latest release](https://img.shields.io/github/commits-since/dynaconf/dynaconf/latest.svg) ![GitHub last commit](https://img.shields.io/github/last-commit/dynaconf/dynaconf.svg) [![Code Style Black](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://github.com/astral-sh/ruff)
 
-
-
-[![Foo](https://xscode.com/assets/promo-banner.svg)](https://xscode.com/rochacbruno/dynaconf)
+![GitHub issues](https://img.shields.io/github/issues/dynaconf/dynaconf.svg) [![User Forum](https://img.shields.io/badge/users-forum-blue.svg?logo=googlechat)](https://github.com/dynaconf/dynaconf/discussions) [![Join the chat at https://gitter.im/dynaconf/dev](https://badges.gitter.im/dynaconf/dev.svg)](https://gitter.im/dynaconf/dev?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge) [![ Matrix](https://img.shields.io/badge/dev-room-blue.svg?logo=matrix)](https://matrix.to/#/#dynaconf:matrix.org)
 
 ## Features
 
@@ -20,11 +20,6 @@
 - Built-in extensions for **Django** and **Flask** web frameworks.
 - CLI for common operations such as `init, list, write, validate, export`.
 - full docs on https://dynaconf.com
-
-## Quick start
-
-> **DEMO:** You can see a working demo here: https://github.com/rochacbruno/learndynaconf
-
 
 ### Install
 
@@ -61,17 +56,20 @@ $ dynaconf init -f toml
 .
 ├── config.py       # This is from where you import your settings object (required)
 ├── .secrets.toml   # This is to hold sensitive data like passwords and tokens (optional)
-└── settings.toml   # This is to hold your application setttings (optional)
+└── settings.toml   # This is to hold your application settings (optional)
 ```
 
-On the file `config.py` Dynaconf init generates the following boilerpate
+On the file `config.py` Dynaconf init generates the following boilerplate
 
 ```py
 from dynaconf import Dynaconf
 
 settings = Dynaconf(
     envvar_prefix="DYNACONF",  # export envvars with `export DYNACONF_FOO=bar`.
-    settings_files=['settings.yaml', '.secrets.yaml'],  # Load files in the given order.
+    settings_files=[
+        "settings.yaml",
+        ".secrets.yaml",
+    ],  # Load files in the given order.
 )
 ```
 
@@ -113,11 +111,11 @@ from path.to.project.config import settings
 # Reading the settings
 
 settings.username == "admin"  # dot notation with multi nesting support
-settings.PORT == 9900  # case insensitive
-settings['password'] == "secret123"  # dict like access
+settings.PORT == 9900  # case-insensitive
+settings["password"] == "secret123"  # dict like access
 settings.get("nonexisting", "default value")  # Default values just like a dict
 settings.databases.name == "mydb"  # Nested key traversing
-settings['databases.schema'] == "main"  # Nested key traversing
+settings["databases.schema"] == "main"  # Nested key traversing
 ```
 
 ## More
@@ -132,9 +130,10 @@ There is a lot more you can do, **read the docs:** http://dynaconf.com
 
 ## Contribute
 
-Main discussions happens on [t.me/dynaconf](https://t.me/dynaconf) learn more about how to get involved on [CONTRIBUTING.md guide](CONTRIBUTING.md)
+Main discussions happens on [Discussions Tab](https://github.com/dynaconf/dynaconf/discussions) learn more about how to get involved on [CONTRIBUTING.md guide](CONTRIBUTING.md)
 
-
-## more
+## More
 
 If you are looking for something similar to Dynaconf to use in your Rust projects: https://github.com/rubik/hydroconf
+
+And a special thanks to [Caneco](https://twitter.com/caneco) for the logo.

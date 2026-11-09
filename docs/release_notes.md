@@ -7,15 +7,15 @@ we included a full [diagram](https://viewer.diagrams.net/?highlight=0000ff&edit=
 
 ### Vendoring
 
-Dynaconf now doesn't have dependencies because the main used libraries has
-been vendored, in addition to the vendoring process (which followed the guidelines
-regarding licensing and structure) all the vendored libraries has been minified to
+Dynaconf doesn't have dependencies because the main libraries used have
+been vendored. In addition to the vendoring process (which followed the guidelines
+regarding licensing and structure), all the vendored libraries have been minified to
 save space on the distribution.
 
 Ideally the vendored libraries will be upgraded on-demand only when a new security
 or important bug fix is released on the respective vendored repository.
 
-Exception is python-box which the goal is to remove the dependency and implement
+Python-box is an exception since the goal is to remove the dependency and implement
 its basic features within dynaconf/DynaBox type.
 
 ### Cleanups
@@ -32,14 +32,14 @@ The mechanism to evaluate `Lazy` values has been refactored and now `@format` an
 Fixed a problem when multiple combined validators are registered and fixed
 duplication of ValidationError messages.
 
-All names in a must_exist clausule are now tested, before it wes stopping
-validation on the first failure.
+All names in a must_exist clause are now tested, instead of stopping validation on the
+first failure.
 
 ### Fixes
 
 - Cli now accepts dotted keys ex: `dynaconf -i config.settings list -k foo.bar.zaz`
 - boto is now optional for vault authentication
-- a `.formatter` attrbute lookup was conflicting with Django logging so argument has
+- a `.formatter` attribute lookup was conflicting with Django logging so argument has
 been renamed.
 - box_settings made optional to DynaBox
 - Included an example of SOPS custom loader
@@ -83,7 +83,7 @@ def my_function(settings, validator):
 
 ```
 
-If you want to be lazy evaluated
+If you want it to be lazy evaluated
 
 ```py
 
@@ -98,13 +98,13 @@ Validator("FOO", default=Lazy(empty, formatter=my_function))
 In Dynaconf 3.0.0 we introduced some improvements and with
 those improvements it comes some **breaking changes.**
 
-Some of the changes were discussed on the **1st Dynaconf community meeting** [video is available](https://www.twitch.tv/videos/657033043) and [meeting notes #354](https://github.com/rochacbruno/dynaconf/issues/354).
+Some of the changes were discussed on the **1st Dynaconf community meeting** [video is available](https://www.twitch.tv/videos/657033043) and [meeting notes #354](https://github.com/dynaconf/dynaconf/issues/354).
 
 
 ## Improvements
 
-- Validators now implements `|` and `&` operators to allow `Validator() &| Validator()` and has more `operations` available such as `len_eq, len_min, len_max, startswith` [#353](https://github.com/rochacbruno/dynaconf/pull/353).
-- First level variables are now allowed to be `lowercase` it is now possible to access `settings.foo` or `settings.FOO` [#357](https://github.com/rochacbruno/dynaconf/pull/357).
+- Validators now implements `|` and `&` operators to allow `Validator() &| Validator()` and has more `operations` available such as `len_eq, len_min, len_max, startswith` [#353](https://github.com/dynaconf/dynaconf/pull/353).
+- First level variables are now allowed to be `lowercase` it is now possible to access `settings.foo` or `settings.FOO` [#357](https://github.com/dynaconf/dynaconf/pull/357).
 - All Dependencies are now vendored, so when installing Dynaconf is not needed to install any dependency.
 - Dynaconf configuration options are now aliased so when creating an instance of `LazySettings|FlaskDynaconf|DjangoDynaconf` it is now possible to pass instead of `ENVVAR_PREFIX_FOR_DYNACONF` just `envvar_prefix` and this lowercase alias is now accepted.
 - Fixed bugs in `merge` and deprecated the `@reset` token.
@@ -134,7 +134,7 @@ settings = Dynaconf(**options)
 
 and then in your program you do `from project.config import settings` instead of `from dynaconf import settings`.
 
-The `**options` are any of the [dynaconf config options](/configuration)
+The `**options` are any of the [dynaconf config options](configuration.md)
 
 ex:
 
@@ -161,7 +161,7 @@ key = 'value'
 key = 'value'
 ```
 
-**Now starting on 3.0.0** the environments are disabled by default, so the same file can be crated as.
+**Now starting on 3.0.0** the environments are disabled by default, so the same file can be created as.
 
 ```toml
 key = 'value'
@@ -182,7 +182,7 @@ or to strictly specify your environments.
 
 ```python
 settings = Dynaconf(
-    environments=["default", "prodution", "testing", "xyz"],
+    environments=["default", "production", "testing", "xyz"],
 )
 ```
 

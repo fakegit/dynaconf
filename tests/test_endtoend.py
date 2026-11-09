@@ -1,4 +1,16 @@
+from __future__ import annotations
+
 import os
+from contextlib import AbstractContextManager as ContextManager
+from contextlib import nullcontext
+
+import pytest
+
+from dynaconf.utils import to_dict
+from dynaconf.utils.parse_conf import DynaconfFormatError
+from dynaconf.utils.parse_conf import DynaconfParseError
+
+pytestmark = pytest.mark.usefixtures("no_deprecations")
 
 
 def test_end_to_end(settings):
@@ -63,3 +75,95 @@ def test_boxed_data_call(settings):
     assert settings("boxed_data").params.password == "secret"
     assert settings("boxed_data").params.token.type == 1
     assert settings("boxed_data").params.token.value == 2
+
+
+def test_359_jinja_interpolation():
+    from dynaconf import Dynaconf
+
+    data = {
+        "template": "hello",
+        "a": {
+            "main": "@jinja {{this.template}} world",
+        },
+    }
+    settings = Dynaconf(**data)
+
+    expected = {"main": "hello world"}
+    assert settings.get("a.main") == "hello world"
+    assert to_dict(settings.get("a")) == expected
+
+
+def test_392_interpolation_inside_list():
+    from dynaconf import Dynaconf
+
+    data = {
+        "myvalue": "hello",
+        "a": {
+            "listy": ["@format {this.myvalue} world"],
+        },
+    }
+    settings = Dynaconf(**data)
+
+    assert settings.a.listy[0] == "hello world"
+    assert settings.a.listy == ["hello world"]
+
+
+class TestIssue905:
+    def test_setdefault_has_no_side_effect(self):
+        from dynaconf import Dynaconf
+        from dynaconf import Validator
+
+        data = {
+            "a": {
+                "listy": ["1", "2"],
+            },
+        }
+        settings = Dynaconf(**data, merge_enabled=True)
+        validator_with_default = Validator("a.something_new", default=5)
+        settings.validators.register(validator_with_default)
+        settings.validators.validate()
+        assert settings.a.listy == ["1", "2"]
+
+    def test_envvar_double_quotes_casting(self, settings):
+        # LISTY_STRING_INT{i} are defined in the tests/.env
+        # The 905 bug is about a side-effect of validator default. Doing setdefault
+        # to a.b would affect a.c. In that scenario, were testing that "'1'" was casted
+        # o "1", but that was a side-effect by itself. Now the side-effect nature of
+        # the bug was fixed with tomlfy_filter, so we shouldnt' have this cast anymore.
+        assert settings.LISTY_STRING_INT1 == ["'1'", "'2'"]
+        assert settings.LISTY_STRING_INT2 == ["1", "2"]
+
+
+@pytest.mark.parametrize(
+    "template_string, expectation, warn",
+    [
+        pytest.param(
+            "@jinja {{ cycler.__init__.__globals__.os.popen('id').read() }}",
+            nullcontext(""),
+            pytest.warns(UserWarning, match="Unsafe"),
+            id="jinja-returns-empty-string",
+        ),
+        pytest.param(
+            "@format {this.__class__.__init__.__globals__[os].environ}",
+            pytest.raises(DynaconfFormatError),
+            nullcontext("no warning"),
+            id="format-raises",
+        ),
+        pytest.param(
+            "@get __class__.__init__.__globals__[os].environ",
+            pytest.raises(DynaconfParseError),
+            nullcontext("no warning"),
+            id="get-raises",
+        ),
+    ],
+)
+def test_templating_safety(
+    template_string: str, expectation: ContextManager, warn: ContextManager
+):
+    from dynaconf import Dynaconf
+
+    settings = Dynaconf(malicious=template_string)
+
+    with expectation as result:
+        with warn:
+            assert settings.malicious == result

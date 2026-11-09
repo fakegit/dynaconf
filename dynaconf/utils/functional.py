@@ -1,13 +1,21 @@
+from __future__ import annotations
+
 import copy
 import operator
 
 
 class Empty:
-    def __str__(self):
+    __slots__ = ()
+
+    def __repr__(self):
         return "EMPTY"
 
 
 empty = Empty()
+
+
+def is_lazy(value):
+    return bool(getattr(value, "_dynaconf_lazy_format", False))
 
 
 def new_method_proxy(func):
@@ -41,7 +49,12 @@ class LazyObject:
     __getattr__ = new_method_proxy(getattr)
 
     def __setattr__(self, name, value):
-        if name in ["_wrapped", "_kwargs", "_warn_dynaconf_global_settings"]:
+        if name in [
+            "_wrapped",
+            "_kwargs",
+            "_warn_dynaconf_global_settings",
+            "_wrapper_class",
+        ]:
             # Assign to __dict__ to avoid infinite __setattr__ loops.
             self.__dict__[name] = value
         else:
@@ -54,7 +67,7 @@ class LazyObject:
             raise TypeError(f"can't delete {name}.")
         if self._wrapped is empty:
             self._setup()
-        delattr(self._wrapped, name)
+        delattr(self._wrapped, name.upper())
 
     def _setup(self):
         """

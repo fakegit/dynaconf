@@ -1,7 +1,10 @@
+from __future__ import annotations
+
 import pytest
 
 from dynaconf.base import LazySettings
 
+pytestmark = pytest.mark.usefixtures("no_deprecations")
 
 TOML = """
 [default]
@@ -248,7 +251,7 @@ def test_load_nested_different_types(ext, tmpdir):
     )
 
     assert settings.DEBUG is False
-    assert settings.DATABASE_URI == f"{ext}.example.com"
+    assert f"{ext}.example.com" == settings.DATABASE_URI
     assert settings.PORT == 8080
     assert settings.SERVER == "toml.example.com"
     assert settings.PLUGIN_NAME == "testing"
@@ -278,7 +281,7 @@ def test_load_nested_different_types_with_merge(tmpdir):
     )
 
     assert settings.DEBUG is False
-    assert settings.DATABASE_URI == f"{ext}.example.com"
+    assert f"{ext}.example.com" == settings.DATABASE_URI
     assert settings.PORT == 8080
     assert settings.SERVER == "toml.example.com"
     assert settings.PLUGIN_NAME == "testing"

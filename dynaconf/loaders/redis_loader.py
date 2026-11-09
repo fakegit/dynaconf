@@ -1,3 +1,6 @@
+from __future__ import annotations
+
+from dynaconf.loaders.base import SourceMetadata
 from dynaconf.utils import build_env_list
 from dynaconf.utils import upperfy
 from dynaconf.utils.parse_conf import parse_conf_data
@@ -11,14 +14,15 @@ except ImportError:
 IDENTIFIER = "redis"
 
 
-def load(obj, env=None, silent=True, key=None):
-    """Reads and loads in to "settings" a single key or all keys from redis
+def _get_redis_client(obj):
+    """Create a Redis client from settings.
+
+    If REDIS_URL_FOR_DYNACONF is set, uses StrictRedis.from_url() which
+    supports all URL schemes including rediss:// for TLS connections.
+    Otherwise falls back to creating a client from REDIS_FOR_DYNACONF kwargs.
 
     :param obj: the settings instance
-    :param env: settings env default='DYNACONF'
-    :param silent: if errors should raise
-    :param key: if defined load a single key, else load all in env
-    :return: None
+    :return: StrictRedis client
     """
     if StrictRedis is None:
         raise ImportError(
@@ -27,13 +31,36 @@ def load(obj, env=None, silent=True, key=None):
             "export REDIS_ENABLED_FOR_DYNACONF=false"
         )
 
-    redis = StrictRedis(**obj.get("REDIS_FOR_DYNACONF"))
+    redis_url = obj.get("REDIS_URL_FOR_DYNACONF")
+    if redis_url:
+        return StrictRedis.from_url(redis_url)
+    return StrictRedis(**obj.get("REDIS_FOR_DYNACONF"))
+
+
+def load(obj, env=None, silent=True, key=None, validate=False):
+    """Reads and loads in to "settings" a single key or all keys from redis
+
+    :param obj: the settings instance
+    :param env: settings env default='DYNACONF'
+    :param silent: if errors should raise
+    :param key: if defined load a single key, else load all in env
+    :return: None
+    """
+    redis = _get_redis_client(obj)
     prefix = obj.get("ENVVAR_PREFIX_FOR_DYNACONF")
+    env_list = build_env_list(obj, env or obj.current_env)
     # prefix is added to env_list to keep backwards compatibility
-    env_list = [prefix] + build_env_list(obj, env or obj.current_env)
+    if prefix:
+        env_list.insert(0, prefix)
+
     for env_name in env_list:
-        holder = f"{prefix.upper()}_{env_name.upper()}"
+        if prefix:
+            holder = f"{prefix.upper()}_{env_name.upper()}"
+        else:
+            holder = env_name.upper()
+
         try:
+            source_metadata = SourceMetadata(IDENTIFIER, "unique", env_name)
             if key:
                 value = redis.hget(holder.upper(), key)
                 if value:
@@ -41,14 +68,23 @@ def load(obj, env=None, silent=True, key=None):
                         value, tomlfy=True, box_settings=obj
                     )
                     if parsed_value:
-                        obj.set(key, parsed_value)
+                        obj.set(
+                            key,
+                            parsed_value,
+                            validate=validate,
+                            loader_identifier=source_metadata,
+                        )
             else:
                 data = {
                     key: parse_conf_data(value, tomlfy=True, box_settings=obj)
                     for key, value in redis.hgetall(holder.upper()).items()
                 }
                 if data:
-                    obj.update(data, loader_identifier=IDENTIFIER)
+                    obj.update(
+                        data,
+                        loader_identifier=source_metadata,
+                        validate=validate,
+                    )
         except Exception:
             if silent:
                 return False
@@ -67,9 +103,9 @@ def write(obj, data=None, **kwargs):
         raise RuntimeError(
             "Redis is not configured \n"
             "export REDIS_ENABLED_FOR_DYNACONF=true\n"
-            "and configure the REDIS_FOR_DYNACONF_* variables"
+            "and configure the REDIS_*_FOR_DYNACONF variables"
         )
-    client = StrictRedis(**obj.REDIS_FOR_DYNACONF)
+    client = _get_redis_client(obj)
     holder = obj.get("ENVVAR_PREFIX_FOR_DYNACONF").upper()
     # add env to holder
     holder = f"{holder}_{obj.current_env.upper()}"
@@ -81,7 +117,7 @@ def write(obj, data=None, **kwargs):
     redis_data = {
         upperfy(key): unparse_conf_data(value) for key, value in data.items()
     }
-    client.hmset(holder.upper(), redis_data)
+    client.hset(holder.upper(), mapping=redis_data)
     load(obj)
 
 
@@ -92,7 +128,7 @@ def delete(obj, key=None):
     :param key: key to delete from store location
     :return: None
     """
-    client = StrictRedis(**obj.REDIS_FOR_DYNACONF)
+    client = _get_redis_client(obj)
     holder = obj.get("ENVVAR_PREFIX_FOR_DYNACONF").upper()
     # add env to holder
     holder = f"{holder}_{obj.current_env.upper()}"

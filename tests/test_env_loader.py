@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import os
 import sys
 from collections import OrderedDict
@@ -9,6 +11,8 @@ from dynaconf import settings  # noqa
 from dynaconf.loaders.env_loader import load
 from dynaconf.loaders.env_loader import load_from_env
 from dynaconf.loaders.env_loader import write
+
+pytestmark = pytest.mark.usefixtures("no_deprecations")
 
 # GLOBAL ENV VARS
 environ["DYNACONF_HOSTNAME"] = "host.com"
@@ -71,7 +75,7 @@ def test_write(tmpdir):
 
     ground_truth = SETTINGS_DATA_GROUND_TRUTH.split("\n")
 
-    with open(str(settings_path), "r") as fp:
+    with open(str(settings_path)) as fp:
         lines = fp.readlines()
         for idx, line in enumerate(lines):
             line = line.strip()
@@ -202,6 +206,20 @@ def test_backwards_compat_using_env_argument():
         silent=True,
     )
     assert settings.VALUE == "BLARG as prefix"
+
+
+def test_load_signed_integer():
+    environ["799_SIGNED_NEG_INT"] = "-1"
+    environ["799_SIGNED_POS_INT"] = "+1"
+    load_from_env(
+        identifier="env_global",
+        key=None,
+        prefix="799",
+        obj=settings,
+        silent=True,
+    )
+    assert settings.SIGNED_NEG_INT == -1
+    assert settings.SIGNED_POS_INT == 1
 
 
 def test_env_is_not_str_raises():
@@ -489,3 +507,19 @@ def test_filtering_unknown_variables_with_prefix():
     assert not settings.get("IGNOREME")
     # Smoke test.
     assert settings.get("MYCONFIG") == "ham"
+
+
+def test_boolean_fix():
+    environ["BOOLFIX_CAPITALTRUE"] = "True"
+    environ["BOOLFIX_CAPITALFALSE"] = "False"
+    settings.IGNORE_UNKNOWN_ENVVARS_FOR_DYNACONF = False
+    load_from_env(
+        obj=settings,
+        prefix="BOOLFIX",
+        key=None,
+        silent=True,
+        identifier="env_global",
+        env=False,
+    )
+    assert settings.CAPITALTRUE is True
+    assert settings.CAPITALFALSE is False

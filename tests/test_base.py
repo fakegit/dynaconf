@@ -1,12 +1,23 @@
+from __future__ import annotations
+
 import os
+import sys
 
 import pytest
 
 from dynaconf import Dynaconf
 from dynaconf import LazySettings
+from dynaconf import ValidationError
+from dynaconf import Validator
 from dynaconf.loaders import toml_loader
+from dynaconf.loaders import yaml_loader
+from dynaconf.nodes import DataDict
+from dynaconf.nodes import DataList
 from dynaconf.strategies.filtering import PrefixFilter
+from dynaconf.utils import to_dict
 from dynaconf.utils.parse_conf import true_values
+
+pytestmark = pytest.mark.usefixtures("no_deprecations")
 
 
 def test_deleted_raise(settings):
@@ -19,9 +30,49 @@ def test_deleted_raise(settings):
     assert settings.exists("TODELETE") is False
     assert settings.get("TODELETE") is None
 
+    # case: del using lowercase when original was mixed-case
+    settings.ToDelete3 = True
+    assert "ToDelete3" in settings
+    assert settings.TODELETE3 is True
+    del settings.todelete3
+    with pytest.raises(AttributeError):
+        assert settings.TODELETE3 is True
+    assert settings.exists("TODELETE3") is False
+    assert settings.get("TODELETE3") is None
+
+    # case: del nested attribute
+    settings.set("Abc.Xyz.Uv", 123)
+    assert settings.abc.xyz.uv == 123
+    del settings.abc.xyz.uv
+    with pytest.raises(AttributeError):
+        assert settings.abc.xyz.uv == 123
+    assert settings.exists("abc.xyz") is True
+    assert settings.exists("abc.xyz.uv") is False
+    assert settings.get("abc.xyz.uv") is None
+
+    # case: del item
+    settings.TODELETE4 = True
+    assert "TODELETE4" in settings
+    assert settings.TODELETE4 is True
+    del settings["TODELETE4"]
+    with pytest.raises(AttributeError):
+        assert settings.TODELETE4 is True
+    assert settings.exists("TODELETE4") is False
+    assert settings.get("TODELETE4") is None
+
+    # case: del item lowercase when orifinal was mixed-case
+    settings.ToDelete3 = True
+    assert "ToDelete3" in settings
+    assert settings.TODELETE3 is True
+    del settings["todelete3"]
+    with pytest.raises(AttributeError):
+        assert settings.TODELETE3 is True
+    assert settings.exists("TODELETE3") is False
+    assert settings.get("TODELETE3") is None
+
 
 def test_delete_and_set_again(settings):
-    """asserts variable can be deleted and setted again"""
+    """asserts variable can be deleted and set again"""
 
     # set
     settings.TODELETE2 = True
@@ -94,6 +145,23 @@ def test_populate_obj_with_ignore(settings):
         assert obj.VALUE == 42.1
 
 
+def test_populate_obj_convert_to_dict(settings):
+    class Obj:
+        pass
+
+    # first make sure regular populate brings in DataDict and DataList
+    obj = Obj()
+    settings.populate_obj(obj)
+    assert isinstance(obj.ADICT, DataDict)
+    assert isinstance(obj.ALIST, DataList)
+
+    # now make sure convert_to_dict=True brings in dict and list
+    obj = Obj()
+    settings.populate_obj(obj, convert_to_dict=True)
+    assert type(obj.ADICT) is dict
+    assert type(obj.ALIST) is list
+
+
 def test_call_works_as_get(settings):
     """settings.get('name') is the same as settings('name')"""
 
@@ -128,38 +196,42 @@ def test_get_env(settings):
 
 def test_float(settings):
     settings.set("money", "500.42")
+    config = settings.__core__.config
     assert settings.exists("MONEY")
     assert settings.MONEY == "500.42"
     assert settings.MONEY != 500.42
     assert settings.store["MONEY"] == "500.42"
-    assert "MONEY" not in settings._deleted
-    assert "money" not in settings._deleted
+    assert "MONEY" not in config.deleted
+    assert "money" not in config.deleted
     assert isinstance(settings.as_float("money"), float)
     assert settings.as_float("MONEY") == 500.42
 
 
 def test_int(settings):
     settings.set("age", "500")
+    config = settings.__core__.config
     assert settings.exists("AGE")
     assert settings.AGE == "500"
     assert settings.AGE != 500
     assert settings.store["AGE"] == "500"
-    assert "AGE" not in settings._deleted
-    assert "age" not in settings._deleted
+    assert "AGE" not in config.deleted
+    assert "age" not in config.deleted
     assert isinstance(settings.as_int("age"), int)
     assert settings.as_int("age") == 500
 
 
 def test_bool(settings):
+    config = settings.__core__.config
     for true_value in true_values:
         # ('t', 'true', 'enabled', '1', 'on', 'yes')
         settings.set("feature", true_value)
+        config = settings.__core__.config
         assert settings.exists("FEATURE")
-        assert settings.FEATURE == true_value
+        assert true_value == settings.FEATURE
         assert settings.FEATURE is not True
         assert settings.store["FEATURE"] == true_value
-        assert "FEATURE" not in settings._deleted
-        assert "feature" not in settings._deleted
+        assert "FEATURE" not in config.deleted
+        assert "feature" not in config.deleted
         assert isinstance(settings.as_bool("feature"), bool)
         assert settings.as_bool("FEATURE") is True
 
@@ -168,23 +240,24 @@ def test_bool(settings):
     for false_value in false_values:
         settings.set("feature", false_value)
         assert settings.exists("FEATURE")
-        assert settings.FEATURE == false_value
+        assert false_value == settings.FEATURE
         assert settings.FEATURE is not False
         assert settings.store["FEATURE"] == false_value
-        assert "FEATURE" not in settings._deleted
-        assert "feature" not in settings._deleted
+        assert "FEATURE" not in config.deleted
+        assert "feature" not in config.deleted
         assert isinstance(settings.as_bool("feature"), bool)
         assert settings.as_bool("FEATURE") is False
 
 
 def test_as_json(settings):
     settings.set("fruits", '["banana", "apple", "kiwi"]')
+    config = settings.__core__.config
     assert settings.exists("FRUITS")
     assert settings.FRUITS == '["banana", "apple", "kiwi"]'
     assert settings.FRUITS != ["banana", "apple", "kiwi"]
     assert settings.store["FRUITS"] == '["banana", "apple", "kiwi"]'
-    assert "FRUITS" not in settings._deleted
-    assert "fruits" not in settings._deleted
+    assert "FRUITS" not in config.deleted
+    assert "fruits" not in config.deleted
     assert isinstance(settings.as_json("fruits"), list)
     assert settings.as_json("fruits") == ["banana", "apple", "kiwi"]
 
@@ -193,22 +266,56 @@ def test_as_json(settings):
     assert settings.PERSON == '{"name": "Bruno"}'
     assert settings.PERSON != {"name": "Bruno"}
     assert settings.store["PERSON"] == '{"name": "Bruno"}'
-    assert "PERSON" not in settings._deleted
-    assert "person" not in settings._deleted
+    assert "PERSON" not in config.deleted
+    assert "person" not in config.deleted
     assert isinstance(settings.as_json("person"), dict)
     assert settings.as_json("person") == {"name": "Bruno"}
 
 
 def test_env_should_be_string(settings):
-    with pytest.raises(AttributeError):
-        with settings.setenv(123456):
-            pass
+    with pytest.raises(ValueError):
+        settings.setenv(123456)
 
 
-def test_env_should_not_have_underline(settings):
-    with pytest.raises(AttributeError):
-        with settings.setenv("COOL_env"):
-            pass
+@pytest.mark.parametrize("env_kwarg", ["env", "ENV_FOR_DYNACONF"])
+def test_env_kwarg_accepts_a_list(create_file, env_kwarg):
+    settings_file = create_file(
+        "settings.toml",
+        """
+        [default]
+        issue_1278_value = "default"
+
+        [test]
+        issue_1278_value = "test"
+        issue_1278_from_test = true
+
+        [dev]
+        issue_1278_value = "dev"
+        issue_1278_from_dev = true
+        """,
+    )
+
+    settings = Dynaconf(
+        settings_files=[settings_file],
+        environments=True,
+        **{env_kwarg: ["test", "dev"]},
+    )
+
+    assert settings.current_env == "test,dev"
+    assert settings.issue_1278_value == "dev"
+    assert settings.issue_1278_from_test is True
+    assert settings.issue_1278_from_dev is True
+
+
+@pytest.mark.parametrize("env", [["test", 1], 1])
+def test_env_kwarg_rejects_invalid_values(env):
+    with pytest.raises(TypeError, match="string or a list of strings"):
+        Dynaconf(environments=True, env=env)
+
+
+def test_env_should_allow_underline(settings):
+    settings.setenv("COOL_env")
+    assert settings.current_env == "COOL_ENV"
 
 
 def test_path_for(settings):
@@ -230,7 +337,7 @@ def test_get_item(settings):
 def test_set_item(settings):
     settings["FOO"] = "bar"
     assert settings.FOO == "bar"
-    assert "FOO" in settings._defaults
+    # assert "FOO" in settings._defaults
     assert settings("FOO") == "bar"
     assert settings.get("FOO") == "bar"
 
@@ -240,7 +347,7 @@ def test_set(settings):
     # instead of settings.BAZ = 'bar'
     settings.set("BAZ", "bar")
     assert settings.BAZ == "bar"
-    assert "BAZ" in settings._defaults
+    # assert "BAZ" in settings._defaults
     assert settings("BAZ") == "bar"
     assert settings.get("BAZ") == "bar"
 
@@ -261,6 +368,37 @@ def test_global_set_merge(settings):
             {"name": "item 4"},
         ]
     }
+
+
+def test_global_set_merge_false():
+    # data
+    list_old = [1, 2, 3]
+    list_new = [4, 5, 6]
+    list_expected = [4, 5, 6]
+    dict_old = {"a": {"b": "B"}}
+    dict_new = {"a": {"c": "C"}}
+    dict_expected = {"a": {"c": "C"}}
+
+    # environment = False
+    settings_a = Dynaconf(
+        environments=False,
+        merge_enabled=False,
+    )
+    settings_a.set("default", {"dicty": dict_old, "listy": list_old})
+    settings_a.set("default", {"dicty": dict_new, "listy": list_new})
+
+    assert settings_a.default.dicty == dict_expected
+    assert settings_a.default.listy == list_expected
+
+    # environment = True
+    settings_b = Dynaconf(
+        environments=True,
+        merge_enabled=False,
+    )
+    settings_b.set("test", {"dicty": dict_old, "listy": list_old})
+    settings_b.set("test", {"dicty": dict_new, "listy": list_new})
+    assert settings_b.test.dicty == dict_expected
+    assert settings_b.test.listy == list_expected
 
 
 def test_global_merge_shortcut(settings):
@@ -330,6 +468,33 @@ def test_local_set_merge_list_unique(settings):
     assert settings.SCRIPTS == ["install.sh", "dev.sh", "test.sh", "deploy.sh"]
 
 
+def test_local_set_merge_false_dict():
+    # environment = False
+    settings_a = Dynaconf(
+        environments=False,
+        merge_enabled=True,
+    )
+    dict_old = {"a": {"b": {"key_old": "from_old"}}}
+    dict_new = {"a": {"b": {"key_new": "from_new", "dynaconf_merge": False}}}
+    settings_a.set("default", {"dicty": dict_old, "listy": [1, 2, 3]})
+    settings_a.set("default", {"dicty": dict_new, "listy": [9999]})
+
+    assert settings_a.default.dicty.a.b == {"key_new": "from_new"}
+    assert settings_a.default.listy == [1, 2, 3, 9999]
+
+    # environment = True
+    settings_b = Dynaconf(
+        environments=True,
+        merge_enabled=True,
+    )
+    dict_old = {"a": {"b": {"key_old": "from_old"}}}
+    dict_new = {"a": {"b": {"key_new": "from_new", "dynaconf_merge": False}}}
+    settings_b.set("test", {"dicty": dict_old, "listy": [1, 2, 3]})
+    settings_b.set("test", {"dicty": dict_new, "listy": [9999]})
+    assert settings_b.test.dicty.a.b == {"key_new": "from_new"}
+    assert settings_b.test.listy == [1, 2, 3, 9999]
+
+
 def test_set_explicit_merge_token(tmpdir):
     data = {
         "a_list": [1, 2],
@@ -367,6 +532,42 @@ def test_set_explicit_merge_token(tmpdir):
     settings.set("b_list", "@merge zaz")
     assert settings.B_LIST == [1, 2, 3, 4, 5, 6.6, False, "foo", "bar", "zaz"]
 
+    settings.set("b_list", "@merge 7, 8, 9")
+    assert settings.B_LIST == [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6.6,
+        False,
+        "foo",
+        "bar",
+        "zaz",
+        7,
+        8,
+        9,
+    ]
+    settings.set("b_list", "@merge '10','11','12'")
+    assert settings.B_LIST == [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6.6,
+        False,
+        "foo",
+        "bar",
+        "zaz",
+        7,
+        8,
+        9,
+        "10",
+        "11",
+        "12",
+    ]
+
     settings.set("a_dict", "@merge {city='Guarulhos'}")
     assert settings.A_DICT.name == "Bruno"
     assert settings.A_DICT.city == "Guarulhos"
@@ -378,6 +579,48 @@ def test_set_explicit_merge_token(tmpdir):
 
     settings.set("new_key", "@merge foo=bar")
     assert settings.NEW_KEY == {"foo": "bar"}
+
+
+def test_merge_with_underscores(settings):
+    """Test @merge with underscores in keys and values"""
+    settings.set("CONFIG", "@merge foo_bar=baz_qux")
+    assert settings.CONFIG.foo_bar == "baz_qux"
+
+    settings.set("CONFIG2", "@merge my_var=my_value")
+    assert settings.CONFIG2.my_var == "my_value"
+
+
+def test_merge_with_dots_in_values(settings):
+    """Test @merge with dots in values (domains, floats)"""
+    settings.set("SERVER", "@merge host=example.com")
+    assert settings.SERVER.host == "example.com"
+
+    settings.set("API", "@merge endpoint=api.example.com")
+    assert settings.API.endpoint == "api.example.com"
+
+
+def test_merge_with_urls(settings):
+    """Test @merge with URLs in values"""
+    settings.set("API", "@merge url=http://api.example.com/v1")
+    assert settings.API.url == "http://api.example.com/v1"
+
+    settings.set("SECURE_API", "@merge url=https://secure.example.com:443/api")
+    assert settings.SECURE_API.url == "https://secure.example.com:443/api"
+
+
+def test_merge_with_paths(settings):
+    """Test @merge with file paths in values"""
+    settings.set("CONFIG", "@merge path=/usr/local/bin/app")
+    assert settings.CONFIG.path == "/usr/local/bin/app"
+
+    settings.set("DATA", "@merge dir=/var/lib/data")
+    assert settings.DATA.dir == "/var/lib/data"
+
+
+def test_merge_with_email(settings):
+    """Test @merge with email addresses"""
+    settings.set("CONTACT", "@merge email=user@example.com")
+    assert settings.CONTACT.email == "user@example.com"
 
 
 def test_set_new_merge_issue_241_1(tmpdir):
@@ -509,6 +752,91 @@ def test_set_new_merge_issue_241_5(tmpdir):
     }
 
 
+def test_set_insert_token(tmpdir):
+    data = {
+        "a_list": [1, 2],
+        "b_list": [1],
+        "a_dict": {"name": "Bruno", "teams": ["dev"]},
+        "list_of_dicts": [{"number": 1}],
+    }
+    toml_loader.write(str(tmpdir.join("settings.toml")), data, merge=False)
+    settings = LazySettings(settings_file="settings.toml")
+    assert settings.A_LIST == [1, 2]
+    assert settings.B_LIST == [1]
+    assert settings.A_DICT == {"name": "Bruno", "teams": ["dev"]}
+    assert settings.A_DICT.name == "Bruno"
+    assert settings.A_DICT.teams == ["dev"]
+
+    settings.set("a_list", "@insert 0 0")
+    assert settings.A_LIST == [0, 1, 2]
+
+    settings.set("a_list", "@insert 1 1.5")
+    assert settings.A_LIST == [0, 1.5, 1, 2]
+
+    settings.set("a_list", "@insert 4 4")
+    assert settings.A_LIST == [0, 1.5, 1, 2, 4]
+
+    settings.set("b_list", "@insert 0 42")
+    assert settings.B_LIST == [42, 1]
+
+    settings.set("b_list", "@insert 1 43")
+    assert settings.B_LIST == [42, 43, 1]
+
+    settings.set("a_dict.teams", "@insert 0 'admin'")
+    assert settings.A_DICT.teams == ["admin", "dev"]
+
+    settings.set("a_dict.teams", "@insert 1 'staff'")
+    assert settings.A_DICT.teams == ["admin", "staff", "dev"]
+
+    settings.set("a_dict.teams", "@insert 3 'user'")
+    assert settings.A_DICT.teams == ["admin", "staff", "dev", "user"]
+
+    settings.set("a_dict.teams", "@insert 0 'admin'")
+    assert settings.A_DICT.teams == ["admin", "admin", "staff", "dev", "user"]
+
+    settings.set("new_key", "@insert 0 'foo'")
+    assert settings.NEW_KEY == ["foo"]
+
+    settings.set("new_key", "@insert 'bar'")
+    assert settings.NEW_KEY == ["bar", "foo"]
+
+    settings.set("new_key", "@insert 42")
+    assert settings.NEW_KEY == [42, "bar", "foo"]
+
+    settings.set("new_key", "@insert -1 'last'")
+    assert settings.NEW_KEY == [42, "bar", "last", "foo"]
+
+    settings.set("list_of_dicts", '@insert 0 @json {"number": 0}')
+    assert settings.LIST_OF_DICTS == [{"number": 0}, {"number": 1}]
+
+    settings.set("list_of_dicts", "@insert 2 {number=2}")  # valid toml
+    assert settings.LIST_OF_DICTS == [
+        {"number": 0},
+        {"number": 1},
+        {"number": 2},
+    ]
+
+
+def test_set_with_non_str_types():
+    """This replicates issue #1005 in a simplified setup."""
+    settings = Dynaconf(merge_enabled=True)
+    settings.set("a", {"b": {1: "foo"}})
+    settings.set("a", {"b": {"c": "bar"}})
+    assert settings["a"]["b"][1] == "foo"
+    assert settings["a"]["b"]["c"] == "bar"
+
+
+def test_set_with_non_str_types_on_first_level():
+    """Non-str key types on first level."""
+    settings = Dynaconf(merge_enabled=True)
+    settings.set(1, {"b": {1: "foo"}})
+    settings.set("a", {"1": {1: "foo"}})
+    assert settings[1]["b"][1] == "foo"
+    assert settings[1].b[1] == "foo"
+    assert settings.get(1).b[1] == "foo"
+    assert settings["a"]["1"][1] == "foo"
+
+
 def test_exists(settings):
     settings.set("BOOK", "TAOCP")
     assert settings.exists("BOOK") is True
@@ -580,20 +908,56 @@ def test_dotted_traversal_access(settings):
     assert settings.get("ME__NUMBER") == "42"
 
 
+def test_dotted_get_fresh(tmpdir):
+    """Regression test for issue #1187.
+
+    `get`/`get_fresh` with a dot separated key must keep returning the
+    value on repeated calls, reloading it fresh from the source every
+    time instead of returning None after the first call.
+    """
+    settings_file = tmpdir.join("settings.toml")
+    toml_loader.write(str(settings_file), {"foo": {"bar": "baz"}}, merge=False)
+    settings = LazySettings(settings_file="settings.toml")
+
+    assert settings.get("foo.bar", fresh=True) == "baz"
+    # second and third calls used to return None (issue #1187)
+    assert settings.get("foo.bar", fresh=True) == "baz"
+    assert settings.get("foo.bar", fresh=True) == "baz"
+
+    assert settings.get_fresh("foo.bar") == "baz"
+    assert settings.get_fresh("foo.bar") == "baz"
+
+    # fresh must actually reload the value from the source
+    toml_loader.write(
+        str(settings_file), {"foo": {"bar": "changed"}}, merge=False
+    )
+    assert settings.get("foo.bar", fresh=True) == "changed"
+
+    # deeper nesting keeps working across repeated fresh calls too
+    toml_loader.write(
+        str(tmpdir.join("settings2.toml")),
+        {"foo": {"baz": {"qux": "v1"}}},
+        merge=False,
+    )
+    settings2 = LazySettings(settings_file="settings2.toml")
+    assert settings2.get("foo.baz.qux", fresh=True) == "v1"
+    assert settings2.get("foo.baz.qux", fresh=True) == "v1"
+
+
 def test_dotted_set(settings):
     settings.set("MERGE_ENABLED_FOR_DYNACONF", False)
 
     settings.set("nested_1.nested_2.nested_3.nested_4", "secret")
 
     assert settings.NESTED_1.NESTED_2.NESTED_3.NESTED_4 == "secret"
-    assert settings.NESTED_1.NESTED_2.NESTED_3.to_dict() == {
+    assert to_dict(settings.NESTED_1.NESTED_2.NESTED_3) == {
         "nested_4": "secret"
     }
-    assert settings.NESTED_1.NESTED_2.to_dict() == {
+    assert to_dict(settings.NESTED_1.NESTED_2) == {
         "nested_3": {"nested_4": "secret"}
     }
 
-    assert settings.get("nested_1").to_dict() == {
+    assert to_dict(settings.get("nested_1")) == {
         "nested_2": {"nested_3": {"nested_4": "secret"}}
     }
 
@@ -605,14 +969,14 @@ def test_dotted_set(settings):
 
     settings.set("nested_1.nested_2.nested_3.nested_4", "Updated Secret")
     assert settings.NESTED_1.NESTED_2.NESTED_3.NESTED_4 == "Updated Secret"
-    assert settings.NESTED_1.NESTED_2.NESTED_3.to_dict() == {
+    assert to_dict(settings.NESTED_1.NESTED_2.NESTED_3) == {
         "nested_4": "Updated Secret"
     }
-    assert settings.NESTED_1.NESTED_2.to_dict() == {
+    assert to_dict(settings.NESTED_1.NESTED_2) == {
         "nested_3": {"nested_4": "Updated Secret"}
     }
 
-    assert settings.get("nested_1").to_dict() == {
+    assert to_dict(settings.get("nested_1")) == {
         "nested_2": {"nested_3": {"nested_4": "Updated Secret"}},
         "nested_2_0": "Hello",
     }
@@ -632,51 +996,80 @@ def test_dotted_set_with_merge(settings):
     }
     settings.set("DATABASES", start_data)
 
-    assert settings.DATABASES == start_data
+    assert start_data == settings.DATABASES
 
     # Change DB name
     settings.set("DATABASES.default.NAME", "bladb")
-    assert settings.DATABASES != start_data
+    assert start_data != settings.DATABASES
     assert settings.DATABASES["default"].keys() == start_data["default"].keys()
     settings.DATABASES.default.NAME == "bladb"
 
     # Replace items on a list
     assert settings.DATABASES.default.PARAMS == ["a", "b", "c"]
     settings.set("DATABASES.default.PARAMS", ["d", "e"])
-    assert settings.DATABASES != start_data
+    assert start_data != settings.DATABASES
     assert settings.DATABASES["default"].keys() == start_data["default"].keys()
     assert settings.DATABASES.default.PARAMS == ["d", "e"]
 
     # Add new items to the list
     settings.set("DATABASES.default.PARAMS", '@merge ["e", "f", "g"]')
-    assert settings.DATABASES != start_data
+    assert start_data != settings.DATABASES
     assert settings.DATABASES["default"].keys() == start_data["default"].keys()
     assert settings.DATABASES.default.PARAMS == ["d", "e", "e", "f", "g"]
 
     # Replace a dict
     assert settings.DATABASES.default.ATTRS == {"a": 1, "b": 2}
     settings.set("DATABASES.default.ATTRS", {"c": 3})
-    assert settings.DATABASES != start_data
+    assert start_data != settings.DATABASES
     assert settings.DATABASES["default"].keys() == start_data["default"].keys()
     assert settings.DATABASES.default.ATTRS == {"c": 3}
 
     # Add new item to the dict
     settings.set("DATABASES.default.ATTRS", '@merge {"b": 2, "d": 4}')
-    assert settings.DATABASES != start_data
+    assert start_data != settings.DATABASES
     assert settings.DATABASES["default"].keys() == start_data["default"].keys()
     assert settings.DATABASES.default.ATTRS == {"b": 2, "c": 3, "d": 4}
 
     # Replace the entire list
     settings.set("DATABASES.default.PARAMS", ["x", "y", "z"], tomlfy=True)
-    assert settings.DATABASES != start_data
+    assert start_data != settings.DATABASES
     assert settings.DATABASES["default"].keys() == start_data["default"].keys()
     assert settings.DATABASES.default.PARAMS == ["x", "y", "z"]
 
     # Replace the entire dict
     settings.set("DATABASES.default.ATTRS", "{x=26}", tomlfy=True)
-    assert settings.DATABASES != start_data
+    assert start_data != settings.DATABASES
     assert settings.DATABASES["default"].keys() == start_data["default"].keys()
     assert settings.DATABASES.default.ATTRS == {"x": 26}
+
+
+def test_deepcopy_settings():
+    import copy
+
+    from dynaconf.base import Settings
+
+    s1 = Settings()
+    s2 = copy.deepcopy(s1)
+    assert id(s1) != id(s2)
+    assert id(s1.__core__) != id(s2.__core__)
+    assert s1.__core__._cache is not s2.__core__._cache
+
+
+def test_cache_is_isolated_per_instance():
+    s1 = Dynaconf()
+    s2 = Dynaconf()
+
+    s1.set("KEY", "value1")
+    s2.set("KEY", "value2")
+
+    _ = s1.KEY
+    _ = s2.KEY
+
+    assert "KEY" in s2.__core__._cache
+
+    s1.__core__.clear_cache()
+
+    assert "KEY" in s2.__core__._cache
 
 
 def test_from_env_method(clean_env, tmpdir):
@@ -707,7 +1100,7 @@ def test_from_env_method(clean_env, tmpdir):
     assert other_settings.get("ARBITRARY_KEY") is None
     assert other_settings.get("ONLY_IN_DEVELOPMENT") is None
     with pytest.raises(AttributeError):
-        # values set programatically are not cloned
+        # values set programmatically are not cloned
         other_settings.ARBITRARY_KEY
     with pytest.raises(AttributeError):
         # values set only in a specific env not cloned
@@ -755,6 +1148,116 @@ def test_from_env_method(clean_env, tmpdir):
     assert settings.A_DEFAULT == "From default env"
 
 
+def test_env_override_nested_lazy_value_from_included_file(
+    clean_env, monkeypatch, tmpdir
+):
+    data_1 = {
+        "default": {
+            "from_1": "from 1",
+            "nested_from_1": {"from_1": "nested from 1"},
+        }
+    }
+    data_2 = {
+        "default": {
+            "dynaconf_include": ["configuration_1.yaml"],
+            "with_jinja_from_1": "@jinja hello {{this.from_1}}",
+            "with_jinja_from_nested_1": (
+                "@jinja hello {{this.nested_from_1.from_1}}"
+            ),
+        }
+    }
+    yaml_loader.write(str(tmpdir.join("configuration_1.yaml")), data_1)
+    yaml_loader.write(str(tmpdir.join("configuration_2.yaml")), data_2)
+
+    settings = Dynaconf(
+        settings_files=["configuration_2.yaml"],
+        environments=True,
+        root_path=str(tmpdir),
+        settings_file_required=True,
+    )
+    assert settings.with_jinja_from_1 == "hello from 1"
+    assert settings.with_jinja_from_nested_1 == "hello nested from 1"
+
+    monkeypatch.setenv(
+        "DYNACONF_with_jinja_from_nested_1", "complete override"
+    )
+    settings = Dynaconf(
+        settings_files=["configuration_2.yaml"],
+        environments=True,
+        root_path=str(tmpdir),
+        settings_file_required=True,
+    )
+
+    assert settings.with_jinja_from_nested_1 == "complete override"
+
+
+def test_envless_load_file(tmpdir):
+    """Ensure passing settings.load_file accepts env argument.
+
+    settings.load_file("filename.toml", env="development")
+    will load the default + development env.
+
+    settings.load_file("filename.toml", env=False|None)
+    will load in envless mode.
+
+    settings.load_file("filename.toml")
+    will respect the current env settings (normal mode).
+    """
+    data = {
+        "default": {"a_default": "From default env"},
+        "development": {"value": "From development env"},
+    }
+    toml_path = str(tmpdir.join("base_settings.toml"))
+    toml_loader.write(toml_path, data, merge=False)
+
+    data = {
+        "development": {"another_value": "Another development env"},
+    }
+    toml_path2 = str(tmpdir.join("base_settings2.toml"))
+    toml_loader.write(toml_path2, data, merge=False)
+
+    data = {"value": "Envless value"}
+    toml_path_envless = str(tmpdir.join("base_settings_envless.toml"))
+    toml_loader.write(toml_path_envless, data, merge=False)
+
+    settings = Dynaconf(
+        environments=["development", "other"], settings_file=toml_path
+    )
+    assert settings.VALUE == "From development env"
+    assert settings.A_DEFAULT == "From default env"
+
+    # load the env file normal way (respecting current env)
+    settings.load_file(toml_path2)
+    assert settings.ANOTHER_VALUE == "Another development env"
+
+    # load the envless file
+    settings.load_file(toml_path_envless, env=False)
+    assert settings.VALUE == "Envless value"
+
+
+def test_load_file_missing_path_with_silent_false(tmpdir):
+    """load_file raises FileNotFoundError when path is missing and silent=False."""
+    settings = Dynaconf()
+    missing = str(tmpdir.join("does_not_exist.toml"))
+    with pytest.raises(FileNotFoundError):
+        settings.load_file(path=missing, silent=False)
+
+
+def test_load_file_missing_path_with_silent_true(tmpdir):
+    """load_file stays quiet when path is missing and silent=True (default)."""
+    settings = Dynaconf()
+    missing = str(tmpdir.join("does_not_exist.toml"))
+    settings.load_file(path=missing)
+    settings.load_file(path=missing, silent=True)
+
+
+def test_load_file_missing_glob_with_silent_false(tmpdir):
+    """load_file does not raise for unmatched glob even when silent=False."""
+    settings = Dynaconf()
+    missing_glob = str(tmpdir.join("*.toml"))
+    settings.load_file(path=missing_glob, silent=False)
+
+
 def test_from_env_method_with_prefix(clean_env, tmpdir):
     data = {
         "default": {"prefix_a_default": "From default env"},
@@ -793,7 +1296,7 @@ def test_from_env_method_with_prefix(clean_env, tmpdir):
     with pytest.raises(AttributeError):
         other_settings.not_prefixed
     with pytest.raises(AttributeError):
-        # values set programatically are not cloned
+        # values set programmatically are not cloned
         other_settings.ARBITRARY_KEY
     with pytest.raises(AttributeError):
         # values set only in a specific env not cloned
@@ -855,6 +1358,7 @@ def test_config_aliases(tmpdir):
         ENV="awesome",
         environments=True,
     )
+    config = settings.__core__.config
 
     assert settings.NAME == "Bruno"
     assert settings.PASSWD == 5678
@@ -862,7 +1366,7 @@ def test_config_aliases(tmpdir):
     assert settings.ENVVAR_PREFIX_FOR_DYNACONF == "BRUCE"
     assert settings.CORE_LOADERS_FOR_DYNACONF == ["TOML"]
     assert settings.LOADERS_FOR_DYNACONF == ["dynaconf.loaders.env_loader"]
-    assert len(settings._loaders) == 1
+    assert len(config.loaders) == 1
     assert settings.DEFAULT_ENV_FOR_DYNACONF == "hello"
     assert settings.ENV_SWITCHER_FOR_DYNACONF == "BRUCE_ENV"
     assert settings.PRELOAD_FOR_DYNACONF == []
@@ -921,7 +1425,7 @@ def test_lowercase_read_mode(tmpdir):
     }
     toml_loader.write(str(tmpdir.join("settings.toml")), data)
 
-    # settings_files mispelled.. should be `settings_file`
+    # settings_files misspelled.. should be `settings_file`
     settings = LazySettings(settings_files="settings.toml")
 
     assert settings.FOO == "bar"
@@ -956,14 +1460,14 @@ def test_settings_dict_like_iteration(tmpdir):
     }
     toml_loader.write(str(tmpdir.join("settings.toml")), data)
 
-    # settings_files mispelled.. should be `settings_file`
+    # settings_files misspelled.. should be `settings_file`
     settings = LazySettings(settings_files="settings.toml")
 
     for key in settings:
-        assert key in settings._store
+        assert key in settings.store
 
     for key, value in settings.items():
-        assert settings._store[key] == value
+        assert settings.store[key] == value
 
 
 def test_prefix_is_not_str_raises():
@@ -988,6 +1492,27 @@ def test_clone():
 
     # assert original settings is not modified
     assert settings.FOO == "bar"
+
+
+def test_clone_with_module_type():
+    # create a settings object
+    settings = LazySettings(FOO="bar", A_MODULE=os)
+    # adding a module type makes object unpickaable
+    # then .clone raised an error, this was fixed by copying the dict.
+    assert settings.FOO == "bar"
+
+    # clone it
+    cloned = settings.dynaconf.clone()
+    assert cloned.FOO == "bar"
+
+    # modify the cloned settings
+    cloned.FOO = "baz"
+    assert cloned.FOO == "baz"
+
+    # assert original settings is not modified
+    assert settings.FOO == "bar"
+
+    assert settings.A_MODULE == cloned.A_MODULE
 
 
 def test_wrap_existing_settings():
@@ -1026,3 +1551,519 @@ def test_wrap_existing_settings_clone():
 
     # assert original settings is not changes as we used a wrapped clone
     assert settings.FOO == "bar"
+
+
+def test_list_entries_from_yaml_should_not_duplicate_when_merged(tmpdir):
+    data = {
+        "default": {
+            "SOME_KEY": "value",
+            "SOME_LIST": ["item_1", "item_2", "item_3"],
+        },
+        "other": {"SOME_KEY": "new_value", "SOME_LIST": ["item_4", "item_5"]},
+    }
+    yaml_loader.write(str(tmpdir.join("test_settings.yaml")), data)
+
+    settings = Dynaconf(
+        settings_files="test_settings.yaml",
+        environments=True,
+        merge_enabled=True,
+    )
+
+    expected_default_value = DataList(["item_1", "item_2", "item_3"])
+    expected_other_value = DataList(
+        ["item_1", "item_2", "item_3", "item_4", "item_5"]
+    )
+
+    assert expected_default_value == settings.from_env("default").SOME_LIST
+    assert expected_other_value == settings.from_env("other").SOME_LIST
+
+
+# #712
+# introduce update(validate), set(validate) and load_file(validate)
+# and global VALIDATE_ON_UPDATE option
+
+# parametrize data to tests
+validate_on_update_data = (
+    pytest.param(
+        {"value_a": "foo"},  # valid data
+        {"value_b": "bar"},  # invalid data
+        id="simple-value",
+    ),
+    pytest.param(
+        {"value_a__nested": "foo"},
+        {"value_b__nested": "bar"},
+        id="dunder-value",
+    ),
+)
+
+
+@pytest.mark.parametrize("valid_data,invalid_data", validate_on_update_data)
+def test_update__validate_on_update_is_false(valid_data, invalid_data):
+    """
+    When `Dynaconf(validate_on_update=False)`
+    Should behave correctly (bypass, pass or raise)
+    """
+    settings = Dynaconf()  # validate_on_update default is false
+    settings.validators.register(Validator("value_a", must_exist=True))
+
+    # should bypass
+    settings.update(invalid_data)
+    settings.update(invalid_data, validate="random")
+    settings.update(invalid_data, validate=123)
+
+    # should raise
+    with pytest.raises(ValidationError):
+        settings.update(invalid_data, validate=True)
+
+    # should pass
+    assert not settings.exists("value_a")
+    settings.update(valid_data, validate=True)
+
+
+@pytest.mark.parametrize("valid_data,invalid_data", validate_on_update_data)
+def test_update__validate_on_update_is_true(valid_data, invalid_data):
+    """
+    When `Dynaconf(validate_on_update=True)`
+    Should behave correctly (bypass, pass or raise)
+    """
+    settings = Dynaconf(validate_on_update=True)
+    settings.validators.register(Validator("value_a", must_exist=True))
+
+    # should bypass
+    settings.update(invalid_data, validate=False)
+    settings.update(invalid_data, validate="random")
+    settings.update(invalid_data, validate=123)
+
+    # should raise
+    with pytest.raises(ValidationError):
+        settings.update(invalid_data)
+
+    # should pass
+    assert not settings.exists("value_a")
+    settings.update(valid_data)
+
+
+def test_update__validate_on_update_is_str_all():
+    """
+    When `Dynaconf(validate_on_update="all")`
+    Should behave correctly (bypass, pass or raise)
+    """
+    settings = Dynaconf(validate_on_update="all")
+    settings.validators.register(Validator("value_a", must_exist=True))
+    settings.validators.register(Validator("value_int", eq=42))
+
+    # should bypass
+    settings.update({"value_b": "foo"}, validate=False)
+    settings.update({"value_b": "foo"}, validate="random")
+    settings.update({"value_b": "foo"}, validate=123)
+
+    # should raise and accumulate errors
+    with pytest.raises(ValidationError) as e:
+        settings.update({"value_b": "not_a", "value_int": 41})
+
+    assert len(e.value.details) == 2
+
+    # should pass
+    assert not settings.exists("value_a")
+    settings.update({"value_a": "exists", "value_int": 42})
+
+
+def test_set__validate_on_update_is_false():
+    """
+    When `Dynaconf(validate_on_update=False)`
+    Should behave correctly (bypass, pass or raise)
+    """
+    settings = Dynaconf()  # validate = false
+    settings.validators.register(Validator("value_a", must_exist=True))
+
+    # should bypass
+    settings.set("value_b", "foo")
+    settings.set("value_b", "foo", validate="random")
+    settings.set("value_b", "foo", validate=123)
+
+    # should raise
+    with pytest.raises(ValidationError):
+        settings.set("value_b", "foo", validate=True)
+
+    # should pass
+    assert not settings.exists("value_a")
+    settings.set("value_a", "foo", validate=True)
+
+
+def test_set__validate_on_update_is_true():
+    """
+    When `Dynaconf(validate_on_update=True)`
+    Should behave correctly (bypass, pass or raise)
+    """
+    settings = Dynaconf(validate_on_update=True)
+    settings.validators.register(Validator("value_a", must_exist=True))
+
+    # should bypass
+    settings.set("value_b__nested", "foo", validate=False)
+    settings.set("value_b__nested", "foo", validate="random")
+    settings.set("value_b__nested", "foo", validate=123)
+
+    # should raise
+    with pytest.raises(ValidationError):
+        settings.set("value_b__nested", "foo")
+
+    # should pass
+    assert not settings.exists("value_a")
+    settings.set("value_a__nested", "foo")
+
+
+def test_set__validate_on_update_is_str_all():
+    """
+    When `Dynaconf(validate_on_update="all")`
+    Should behave correctly (bypass, pass or raise)
+    """
+    settings = Dynaconf(validate_on_update="all")
+    settings.validators.register(Validator("value_a", must_exist=True))
+
+    # should bypass
+    settings.set("value_b__nested", "foo", validate=False)
+    settings.set("value_b__nested", "foo", validate="random")
+    settings.set("value_b__nested", "foo", validate=123)
+
+    # should raise. "all" doesn't make difference here
+    with pytest.raises(ValidationError):
+        settings.set("value_b__nested", "foo")
+
+    # should pass
+    assert not settings.exists("value_a")
+    settings.set("value_a__nested", "foo")
+
+
+def mkfile(tmp_dir, filename: str, data: str):
+    """
+    Test utility function to create tmp files
+    """
+    file = tmp_dir.join(filename)
+    with open(file.strpath, "w", encoding="utf-8") as f:
+        f.write(data)
+    return file
+
+
+params__load_file__data = (
+    pytest.param(
+        {"fname": "valid.toml", "data": "value_a='foo'\nvalue_int=42"},
+        {"fname": "invalid.toml", "data": "value_b='foo'\nvalue_int=41"},
+        id="load-toml",
+    ),
+    pytest.param(
+        {"fname": "valid.ini", "data": "value_a='foo'\nvalue_int='@int 42'"},
+        {"fname": "invalid.ini", "data": "value_b='foo'\nvalue_int='@int 41'"},
+        id="load-ini",
+    ),
+    pytest.param(
+        {"fname": "valid.yaml", "data": "value_a: 'foo'\nvalue_int: 42"},
+        {"fname": "invalid.yaml", "data": "value_b: 'foo'\nvalue_int: 41"},
+        id="load-yaml",
+    ),
+    pytest.param(
+        {"fname": "valid.json", "data": '{"value_a":"foo",\n"value_int":42}'},
+        {
+            "fname": "invalid.json",
+            "data": '{"value_b":"foo",\n"value_int":41}',
+        },
+        id="load-json",
+    ),
+    pytest.param(
+        {"fname": "valid.py", "data": 'VALUE_A="foo"\nVALUE_INT=42'},
+        {"fname": "invalid.py", "data": 'VALUE_B="foo"\nVALUE_INT=41'},
+        id="load-py",
+    ),
+)
+
+
+@pytest.mark.parametrize("valid,invalid", params__load_file__data)
+def test_load_file__validate_on_update_is_false(tmpdir, valid, invalid):
+    """
+    When `Dynaconf(validate_on_update=False)`
+    Should behave correctly (bypass, pass or raise)
+    """
+    # setup files
+    file_with_valid = mkfile(tmpdir, valid["fname"], valid["data"])
+    file_with_invalid = mkfile(tmpdir, invalid["fname"], invalid["data"])
+
+    # setup dyna
+    settings = Dynaconf()  # validate = false
+    settings.validators.register(Validator("value_a", must_exist=True))
+
+    # should bypass when
+    settings.load_file(file_with_invalid)
+    settings.load_file(file_with_invalid, validate="random")
+    settings.load_file(file_with_invalid, validate=123)
+
+    # should raise
+    with pytest.raises(ValidationError):
+        settings.load_file(file_with_invalid, validate=True)
+
+    # should pass
+    assert not settings.exists("value_a")
+    settings.load_file(file_with_valid, validate=True)
+
+
+@pytest.mark.parametrize("valid,invalid", params__load_file__data)
+def test_load_file__validate_on_update_is_true(tmpdir, valid, invalid):
+    """
+    When `Dynaconf(validate_on_update=True)`
+    Should behave correctly (bypass, pass or raise)
+    """
+    # setup files
+    file_with_valid = mkfile(tmpdir, valid["fname"], valid["data"])
+    file_with_invalid = mkfile(tmpdir, invalid["fname"], invalid["data"])
+
+    # setup dyna
+    settings = Dynaconf(validate_on_update=True)
+    settings.validators.register(Validator("value_a", must_exist=True))
+
+    # should bypass when
+    settings.load_file(file_with_invalid, validate=False)
+
+    # should raise
+    with pytest.raises(ValidationError):
+        settings.load_file(file_with_invalid)
+
+    # should pass
+    assert not settings.exists("value_a")
+    settings.load_file(file_with_valid)
+
+
+@pytest.mark.parametrize("valid,invalid", params__load_file__data)
+def test_load_file__validate_on_update_is_str_all(tmpdir, valid, invalid):
+    """
+    When `Dynaconf(validate_on_update="all")`
+    Should behave correctly (bypass, pass or raise accumulating errors)
+    """
+    # setup files
+    file_with_valid = mkfile(tmpdir, valid["fname"], valid["data"])
+    file_with_invalid = mkfile(tmpdir, invalid["fname"], invalid["data"])
+
+    # setup dyna
+    settings = Dynaconf(validate_on_update="all")
+    settings.validators.register(Validator("value_a", must_exist=True))
+    settings.validators.register(Validator("value_int", eq=42))
+
+    # should bypass
+    settings.load_file(file_with_invalid, validate=False)
+    settings.load_file(file_with_invalid, validate="random")
+    settings.load_file(file_with_invalid, validate=123)
+
+    # should raise and accumulate errors
+    with pytest.raises(ValidationError) as e:
+        settings.load_file(file_with_invalid)
+
+    assert len(e.value.details) == 2
+
+    # should pass
+    assert not settings.exists("value_a")
+    settings.load_file(file_with_valid)
+
+
+def test_get_with_sysenv_fallback_global_as_false():
+    """
+    When global sysenv_fallback is False
+    Should not fallback to sys envvars (default)
+    """
+    settings = Dynaconf(sysenv_fallback=False)
+    settings.environ["TEST_KEY"] = "TEST_VALUE"
+
+    assert settings.sysenv_fallback_for_dynaconf is False
+    assert not settings.get("test_key")
+
+
+def test_get_with_sysenv_fallback_global_as_true():
+    """
+    When sysenv_fallback is True
+    Should fallback to sys envvars for uppercase envvar-names only
+    """
+    settings = Dynaconf(sysenv_fallback=True)
+    settings.environ["TEST_KEY"] = "TEST_VALUE"
+
+    assert settings.sysenv_fallback_for_dynaconf is True
+    assert settings.get("test_key") == "TEST_VALUE"
+
+
+def test_get_with_sysenv_fallback_global_as_list():
+    """
+    When sysenv_fallback is list
+    Should fallback to sys envvars only for listed names
+    """
+    settings = Dynaconf(sysenv_fallback=["FOO_KEY"])
+    settings.environ["TEST_KEY"] = "TEST_VALUE"
+    settings.environ["FOO_KEY"] = "FOO_VALUE"
+
+    assert isinstance(settings.sysenv_fallback_for_dynaconf, list)
+    assert not settings.get("test_key")
+    assert settings.get("foo_key") == "FOO_VALUE"
+
+
+def test_get_with_sysenv_fallback_local_overrides():
+    """
+    When there are local overrides
+    Should behave according to the overrides
+    """
+    # global is False
+    settings = Dynaconf(sysenv_fallback=False)
+    settings.environ["TEST_KEY"] = "TEST_VALUE"
+
+    assert settings.sysenv_fallback_for_dynaconf is False
+    assert not settings.get("test_key")
+    assert not settings.get("test_key", sysenv_fallback=["foo_key"])
+    assert settings.get("test_key", sysenv_fallback=True) == "TEST_VALUE"
+    assert (
+        settings.get("test_key", sysenv_fallback=["test_key"]) == "TEST_VALUE"
+    )
+
+    # global is True
+    settings = Dynaconf(sysenv_fallback=True)
+    settings.environ["ANOTHER_TEST"] = "ANOTHER_VALUE"
+
+    assert settings.sysenv_fallback_for_dynaconf is True
+    assert settings.get("another_test") == "ANOTHER_VALUE"
+    assert not settings.get("another_test", sysenv_fallback=False)
+
+
+# issue #965
+def test_no_extra_values_in_nested_structure():
+    settings = Dynaconf()
+    settings.set("key", [{"d": "v"}])
+    assert settings.key == [{"d": "v"}]
+
+
+class TestIndexMerge:
+    def test_dotted_set_with_index_merge_disabled(self, settings):
+        settings.set("MERGE_ENABLED_FOR_DYNACONF", False)
+        assert bool(settings.get("INDEX_SEPARATOR_FOR_DYNACONF")) is False
+        settings.set(
+            "nested_a.nested_b[2][1].nested_c.nested_d[3]", "old_conf"
+        )
+        assert "nested_b[2][1]" in settings.nested_a
+        with pytest.raises(AttributeError):
+            settings.nested_a.nested_b
+
+    def test_dotted_set_bracket_first_segment_disabled(self):
+        # With index merge disabled a bracket is a literal key. When the
+        # bracket is in the first (top-level) segment the resolved key still
+        # holds the `[` and used to be re-routed into _dotted_set, recursing
+        # forever. It should just be stored as a literal key.
+        settings = Dynaconf()
+        assert bool(settings.get("INDEX_SEPARATOR_FOR_DYNACONF")) is False
+
+        settings.set("a[1]", "v")
+        assert settings.get("a[1]") == "v"
+
+        settings.set("servers[0].name", "web1")
+        assert settings.get("servers[0]") == {"name": "web1"}
+
+    def test_dotted_set(self, settings):
+        settings.set("MERGE_ENABLED_FOR_DYNACONF", False)
+        settings.set("INDEX_SEPARATOR_FOR_DYNACONF", "___")
+
+        # Dotted set with index
+        settings.set(
+            "nested_a.nested_b[2][1].nested_c.nested_d[3]", "old_conf"
+        )
+        settings.set(
+            "nested_a.nested_b[2][1].nested_c.nested_d[3]", "new_conf1"
+        )  # overwrite
+        settings.set(
+            "nested_a.nested_b[2][1].nested_c.nested_d[2]", "new_conf2"
+        )  # insert
+        assert (
+            settings.NESTED_A.NESTED_B[2][1].NESTED_C.NESTED_D[3]
+            == "new_conf1"
+        )
+        assert (
+            settings.NESTED_A.NESTED_B[2][1].NESTED_C.NESTED_D[2]
+            == "new_conf2"
+        )
+        assert len(settings.NESTED_A.NESTED_B[0]) < 1
+        settings.set(
+            "nested_a.nested_b[0][2].nested_c.nested_d[0]", "extra_conf"
+        )  # add more
+        assert len(settings.NESTED_A.NESTED_B[0]) > 0
+        settings.set(
+            "nested_a.nested_b[2][1].nested_c.nested_d",
+            ["conf1", "conf2", "conf3"],
+        )  # overwrite list
+        assert settings.NESTED_A.NESTED_B[2][1].NESTED_C.NESTED_D == [
+            "conf1",
+            "conf2",
+            "conf3",
+        ]
+
+        # This test case is the reason why choosing
+        # __(\d+) pattern instead of _(\d+)_
+        settings.set("nested_5.nested_6_0", "World")
+        assert settings.NESTED_5.NESTED_6_0 == "World"
+
+    def test_dotted_set_scalar_list_pads_with_none(self, settings):
+        settings.set("INDEX_SEPARATOR_FOR_DYNACONF", "___")
+
+        # Assigning an index of a plain list should leave the skipped
+        # positions empty (None), not nested empty containers.
+        settings.set("ports[2]", 9090)
+        assert list(settings.PORTS) == [None, None, 9090]
+
+        # Nesting is preserved: only the leaf gap becomes None, the outer
+        # list still pads with an empty list.
+        settings.set("matrix[1][1]", "x")
+        assert list(settings.MATRIX) == [[], [None, "x"]]
+
+    def test_environ_dunder_set_scalar_list_pads_with_none(self):
+        os.environ["DYNACONF_PORTS___2"] = "9090"
+        settings = Dynaconf(INDEX_SEPARATOR_FOR_DYNACONF="___")
+        assert list(settings.PORTS) == [None, None, 9090]
+        del os.environ["DYNACONF_PORTS___2"]
+
+    def test_environ_dunder_set_with_index_merge_disabled(self):
+        os.environ["DYNACONF_NESTED_A__nested_1__nested_2"] = "new_conf"
+        os.environ[
+            "DYNACONF_NESTED_A__nested_b___2___1__nested_c__nested_d___3"
+        ] = "old_conf"
+        settings = Dynaconf(envvar_prefix="DYANCONF")
+        assert bool(settings.INDEX_SEPARATOR_FOR_DYNACONF) is False
+        assert isinstance(settings.NESTED_A.NESTED_B, dict)
+        assert "_2" in settings.nested_a.nested_b
+
+    def test_environ_dunder_set(self):
+        os.environ["DYNACONF_NESTED_A__nested_1__nested_2"] = "new_conf"
+        os.environ[
+            "DYNACONF_NESTED_A__nested_b___2___1__nested_c__nested_d___3"
+        ] = "old_conf"
+        settings = Dynaconf(
+            envvar_prefix="DYANCONF", INDEX_SEPARATOR_FOR_DYNACONF="___"
+        )
+        assert isinstance(settings.NESTED_A.NESTED_B, list)
+        assert isinstance(settings.NESTED_A.NESTED_B[2], list)
+        assert isinstance(settings.NESTED_A.NESTED_B[2][1], dict)
+        assert (
+            settings.NESTED_A.NESTED_B[2][1].NESTED_C.NESTED_D[3] == "old_conf"
+        )
+        assert settings.NESTED_A.NESTED_1.NESTED_2 == "new_conf"
+        # remove environment variables after testing
+        del os.environ["DYNACONF_NESTED_A__nested_1__nested_2"]
+        del os.environ[
+            "DYNACONF_NESTED_A__nested_b___2___1__nested_c__nested_d___3"
+        ]
+
+    @pytest.mark.skipif(
+        sys.platform == "win32", reason="Different behavior in Windows"
+    )
+    def test_docs_example(self, monkeypatch):
+        expected = {
+            "default": {
+                "WORKERS": [{"Address": "1.1.1.1"}, {"Address": "2.2.2.2"}],
+            }
+        }
+        with monkeypatch.context() as m:
+            m.setenv(
+                "DYNACONF_DATABASES__default__WORKERS___0__Address", "1.1.1.1"
+            )
+            m.setenv(
+                "DYNACONF_DATABASES__default__WORKERS___1__Address", "2.2.2.2"
+            )
+            settings = Dynaconf(INDEX_SEPARATOR_FOR_DYNACONF="___")
+            assert settings.databases == expected

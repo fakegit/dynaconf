@@ -1,18 +1,30 @@
+from __future__ import annotations
+
 import os
+from collections.abc import Iterator
+from typing import TYPE_CHECKING
 
 import pytest
+import redis
+from redis.exceptions import ConnectionError as RedisConnectionError
 
 from dynaconf import LazySettings
 from dynaconf.loaders.redis_loader import delete
 from dynaconf.loaders.redis_loader import load
 from dynaconf.loaders.redis_loader import write
+from dynaconf.utils.inspect import get_history
+
+if TYPE_CHECKING:
+    from pytest_docker.plugin import Service
 
 
-def custom_checker(ip_address, port):
-    # This function should be check if the redis server is online and ready
-    # write(settings, {"SECRET": "redis_works"})
-    # return load(settings, key="SECRET")
-    return True
+def is_responsive(host, port):
+    try:
+        return redis.Redis(
+            host=host, port=port, socket_connect_timeout=2
+        ).ping()
+    except RedisConnectionError:
+        return False
 
 
 DYNACONF_TEST_REDIS_URL = os.environ.get("DYNACONF_TEST_REDIS_URL", None)
@@ -22,16 +34,17 @@ if DYNACONF_TEST_REDIS_URL:
     def docker_redis():
         return DYNACONF_TEST_REDIS_URL
 
-
 else:
 
     @pytest.fixture(scope="module")
-    def docker_redis(docker_services):
-        docker_services.start("redis")
-        public_port = docker_services.wait_for_service(
-            "redis", 6379, check_server=custom_checker
+    def docker_redis(docker_ip: str, docker_services: Iterator[Service]):
+        port = docker_services.port_for("redis", 6379)
+        url = f"http://{docker_ip}:{port}"
+        docker_services.wait_until_responsive(
+            timeout=15.0,
+            pause=0.1,
+            check=lambda: is_responsive(docker_ip, port),
         )
-        url = f"http://{docker_services.docker_ip}:{public_port}"
         return url
 
 
@@ -105,3 +118,18 @@ def test_delete_all_from_redis(docker_redis):
     settings = LazySettings(environments=True)
     delete(settings)
     assert load(settings, key="OTHER_SECRET") is None
+
+
+@pytest.mark.integration
+def test_redis_has_proper_source_metadata(docker_redis):
+    os.environ["REDIS_ENABLED_FOR_DYNACONF"] = "1"
+    os.environ["REDIS_HOST_FOR_DYNACONF"] = "localhost"
+    os.environ["REDIS_PORT_FOR_DYNACONF"] = "6379"
+    settings = LazySettings(environments=True)
+    write(settings, {"SECRET": "redis_works_perfectly"})
+    load(settings)
+    history = get_history(
+        settings, filter_callable=lambda s: s.loader == "redis"
+    )
+    assert history[0]["env"] == "development"  # default when environments=True
+    assert history[0]["value"]["SECRET"] == "redis_works_perfectly"

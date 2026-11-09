@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import warnings
 from collections import ChainMap
 from contextlib import suppress
@@ -11,8 +13,9 @@ except ImportError:  # pragma: no cover
     Config = object
 
 
+from importlib.metadata import EntryPoint
+
 import dynaconf
-import pkg_resources
 
 
 class FlaskDynaconf:
@@ -69,7 +72,7 @@ class FlaskDynaconf:
             app,
             ENV='MYSITE',
             SETTINGS_FILE='settings.yml',
-            EXTRA_VALUE='You can add aditional config vars here'
+            EXTRA_VALUE='You can add additional config vars here'
         )
 
     Take a look at examples/flask in Dynaconf repository
@@ -90,14 +93,13 @@ class FlaskDynaconf:
                 "To use this extension Flask must be installed "
                 "install it with: pip install flask"
             )
-        self.kwargs = kwargs
-
-        kwargs.setdefault("ENVVAR_PREFIX", "FLASK")
-        env_prefix = f"{kwargs['ENVVAR_PREFIX']}_ENV"  # FLASK_ENV
-        kwargs.setdefault("ENV_SWITCHER", env_prefix)
-        kwargs.setdefault("ENVIRONMENTS", True)
-        kwargs.setdefault("load_dotenv", True)
-        kwargs.setdefault(
+        self.kwargs = {k.upper(): v for k, v in kwargs.items()}
+        self.kwargs.setdefault("ENVVAR_PREFIX", "FLASK")
+        env_prefix = f"{self.kwargs['ENVVAR_PREFIX']}_ENV"  # FLASK_ENV
+        self.kwargs.setdefault("ENV_SWITCHER", env_prefix)
+        self.kwargs.setdefault("ENVIRONMENTS", True)
+        self.kwargs.setdefault("LOAD_DOTENV", True)
+        self.kwargs.setdefault(
             "default_settings_paths", dynaconf.DEFAULT_SETTINGS_FILES
         )
 
@@ -109,6 +111,9 @@ class FlaskDynaconf:
 
     def init_app(self, app, **kwargs):
         """kwargs holds initial dynaconf configuration"""
+        if kwargs.pop("compatibility_mode", None) is True:
+            kwargs["DYNABOXIFY"] = False
+
         self.kwargs.update(kwargs)
         self.settings = self.dynaconf_instance or dynaconf.LazySettings(
             **self.kwargs
@@ -143,7 +148,7 @@ class DynaconfConfig(Config):
 
     def __init__(self, _settings, _app, *args, **kwargs):
         """perform the initial load"""
-        super(DynaconfConfig, self).__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
 
         # Bring Dynaconf instance value to Flask Config
         Config.update(self, _settings.store)
@@ -177,6 +182,9 @@ class DynaconfConfig(Config):
 
     def items(self):
         return self._chain_map().items()
+
+    def setdefault(self, key, value=None):
+        return self._chain_map().setdefault(key, value)
 
     def __iter__(self):
         return self._chain_map().__iter__()
@@ -216,11 +224,11 @@ class DynaconfConfig(Config):
             return
 
         for object_reference in app.config[key]:
-            # add a placeholder `name` to create a valid entry point
-            entry_point_spec = f"__name = {object_reference}"
             # parse the entry point specification
-            entry_point = pkg_resources.EntryPoint.parse(entry_point_spec)
+            entry_point = EntryPoint(
+                name=None, group=None, value=object_reference
+            )
             # dynamically resolve the entry point
-            initializer = entry_point.resolve()
+            initializer = entry_point.load()
             # Invoke extension initializer
             initializer(app)

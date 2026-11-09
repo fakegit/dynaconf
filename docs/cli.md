@@ -9,11 +9,11 @@ Every command (except the init) will require the Instance can be set using `-i` 
 
 The `$ dynaconf -i config.settings` cli provides some useful commands
 
-> **IMPORTANT** if you are using [Flask Extension](/flask/) the env var `FLASK_APP` must be defined to use the CLI, and if using [Django Extension](/django/) the `DJANGO_SETTINGS_MODULE` must be defined.
+> **IMPORTANT** if you are using [Flask Extension](flask.md) the env var `FLASK_APP` must be defined to use the CLI, and if using [Django Extension](django.md) the `DJANGO_SETTINGS_MODULE` must be defined.
 
 ### dynaconf --help
 
-```
+```bash
 Usage: dynaconf [OPTIONS] COMMAND [ARGS]...
 
   Dynaconf - Command Line Interface
@@ -28,12 +28,12 @@ Options:
   --help               Show this message and exit.
 
 Commands:
-  init      Inits a dynaconf project By default it creates a settings.toml...
-  list      Lists all user defined config values and if `--all` is passed
-            it...
-
-  validate  Validates Dynaconf settings based on rules defined in...
-  write     Writes data to specific source
+  get       Returns the raw value for a settings key.
+  init      Inits a dynaconf project.
+  inspect   Inspect the loading history of the given settings instance.
+  list      Lists user defined settings or all (including internal configs).
+  validate  Validates Dynaconf settings based on provided rules.
+  write     Writes data to specific source.
 ```
 
 ### dynaconf init
@@ -66,12 +66,14 @@ as well as `.gitignore` file ignoring the generated `.secrets.toml`
 .secrets.*
 ```
 
-> For sensitive data in production is recommended using [Vault Server](/secrets/)
+> For sensitive data in production is recommended using [Vault Server](secrets.md)
 
-```
+```bash
 Usage: dynaconf init [OPTIONS]
 
-  Inits a dynaconf project By default it creates a settings.toml and a
+  Inits a dynaconf project.
+
+  By default it creates a settings.toml and a
   .secrets.toml for [default|development|staging|testing|production|global]
   envs.
 
@@ -100,6 +102,173 @@ Options:
 
 Note that `-i`/`--instance` cannot be used with `init` as `-i` must point to an existing instance of the settings.
 
+
+### Dynaconf inspect (tech preview)
+
+> **NEW in 3.2.0**
+
+!!! warning
+    This feature is in **tech preview** the usage interface and output format is
+    subject to change.
+
+Inspect and dump data's loading history about a specific key or environment.
+
+It is also available as a [utility function](advanced.md#inspecting-history).
+
+```
+Usage: dynaconf inspect [OPTIONS]
+
+  Inspect the loading history of the given settings instance.
+
+  Filters by key and environment, otherwise shows all.
+
+Options:
+  -k, --key TEXT                  Filters result by key.
+  -e, --env TEXT                  Filters result by environment on --report-
+                                  mode=inspect.
+
+  -f, --format [yaml|json|json-compact]
+                                  The output format.
+  -s, --old-first                 Invert history sorting to 'old-first' on
+                                  --report-mode=inspect.
+
+  -n, --limit INTEGER             Limits how many history entries are shown on
+                                  --report-mode=inspect.
+
+  -a, --all                       Show dynaconf internal settings?
+  -m, --report-mode [inspect|debug]
+  -v, --verbose                   Increase verbosity of the output on
+                                  --report-mode=debug.
+
+  --help                          Show this message and exit.
+                    Show this message and exit.
+```
+
+Sample usage:
+
+```yaml
+>>> dynaconf -i app.settings inspect -k foo -f yaml -n 2
+header:
+  env_filter: 'foo'
+  key_filter: None
+  new_first: 'True'
+  history_limit: None
+  include_internal: 'False'
+current: from_environ
+history:
+- loader: yaml
+  identifier: file_a.yaml
+  env: default
+  merged: false
+  value:
+    FOO: from_yaml
+- loader: env_global
+  identifier: unique
+  env: global
+  merged: false
+  value:
+    FOO: from_environ
+    BAR: environ_only
+```
+
+To save to a file, use regular stream redirect methods:
+
+```bash
+$ dynaconf -i app.settings inspect -k foo -f yaml > dump.yaml
+```
+
+#### Inspect Debug Info
+
+> **NEW** in version 3.2.8
+
+Prints debug information about the current settings instance
+
+```bash
+dynaconf inspect -m debug -vv
+```
+
+Verbosity levels are
+
+- 0 (default): Include only the count of keys loaded by each loader
+- 1: Include the keys loaded by each loader
+- 2: Include the keys loaded by each loader and the values of each key
+
+
+Debug mode also accepts the `-k key` to filter the output by a specific key.
+
+
+Sample output in YAML format:
+
+**TIP**: adding `-v` will list the keys and `-vv` will list the keys and values. 
+
+```yaml
+# dynaconf inspect -m debug --format=yaml
+versions:
+  dynaconf: 3.2.8
+  django: 4.2.16
+root_path: /app/settings
+validators: ["Validator("FOO", must_exist=True, eq="bar")"]
+core_loaders: ["dynaconf.loaders.env_loader"]
+loaded_files:
+- /app/settings/defaults.py
+- /app/settings/development_defaults.py
+- /etc/app/settings.yaml
+history:
+- loader: set_method
+  identifier: init_kwargs
+  data: 13
+- loader: set_method
+  identifier: default_settings
+  data: 56
+- loader: settings_loader
+  identifier: /app/settings/defaults
+  data: 256
+- loader: py
+  identifier: /app/settings/development_defaults
+  data: 16
+- loader: set_method
+  identifier: lambda_1933577857047901425@instance
+  data: 2
+- loader: standard_settings_loader
+  identifier: /etc/app/settings.yaml
+  data: 1
+post_hooks:
+- <function <lambda> at 0x716a7b89c900>
+loaded_hooks:
+- hook: lambda_1933577857047901425@instance
+  data: 1
+environments:
+- development
+- production
+loaded_envs: ['development']
+```
+
+### Dynaconf get
+
+Get raw value for a single key
+
+```bash
+Usage: dynaconf get [OPTIONS] KEY
+
+  Returns the raw value for a settings key.
+
+  If result is a dict, list or tuple it is printed as a valid json string.
+
+Options:
+  -d, --default TEXT  Default value if settings doesn't exist
+  -e, --env TEXT      Filters the env to get the values
+  -u, --unparse       Unparse data by adding markers such as @none, @int etc..
+  --help              Show this message and exit.
+```
+
+Example:
+
+```bash
+export FOO=$(dynaconf get DATABASE_NAME -d 'default')
+```
+
+If the key doesn't exist and no default is provided it will exit with code 1.
+
 ### dynaconf list
 
 List all defined parameters and optionally export to a json file.
@@ -107,8 +276,10 @@ List all defined parameters and optionally export to a json file.
 ```
 Usage: dynaconf list [OPTIONS]
 
-  Lists all user defined config values and if `--all` is passed it also
-  shows dynaconf internal variables.
+  Lists user defined settings or all (including internal configs).
+
+  By default, shows only user defined. If `--all` is passed it also shows
+  dynaconf internal variables aswell.
 
 Options:
   -e, --env TEXT     Filters the env to get the values
@@ -117,9 +288,20 @@ Options:
   -l, --loader TEXT  a loader identifier to filter e.g: toml|yaml
   -a, --all          show dynaconf internal settings?
   -o, --output FILE  Filepath to write the listed values as json
+  -j, --json         Prints out a valid JSON string
   --output-flat      Output file is flat (do not include [env] name)
   --help             Show this message and exit.
 ```
+
+#### Printing out the settings as JSON
+
+```console
+$ dynaconf list --json
+{"a_valid_raw": "json_output"}
+```
+
+The above output is printed to stdout and can be piped to a file or processed
+using tools such as `jq`.
 
 #### Exporting current environment as a file
 
@@ -164,11 +346,24 @@ Options:
 
 Starting on version 1.0.1 it is possible to define validators in **TOML** file called **dynaconf_validators.toml** placed in the same folder as your settings files.
 
-`dynaconf_validators.toml` equivalent to program above
+The format depends on whether your settings use [`environments`](configuration.md#environments).
 
-```ini
+**Without environments** (`environments=False`):
+
+Top-level keys are field names. No section headers are needed.
+
+```toml
+version = {must_exist=true}
+name = {must_exist=true}
+password = {must_exist=false}
+```
+
+**With environments** (`environments=True`):
+
+Section headers are environment names. Each section scopes its validators to that environment.
+
+```toml
 [default]
-
 version = {must_exist=true}
 name = {must_exist=true}
 password = {must_exist=false}
@@ -218,5 +413,5 @@ $ dynaconf -i config.settings --banner
 ██████╔╝   ██║   ██║ ╚████║██║  ██║╚██████╗╚██████╔╝██║ ╚████║██║
 ╚═════╝    ╚═╝   ╚═╝  ╚═══╝╚═╝  ╚═╝ ╚═════╝ ╚═════╝ ╚═╝  ╚═══╝╚═╝
 
-Learn more at: http://github.com/rochacbruno/dynaconf
+Learn more at: http://github.com/dynaconf/dynaconf
 ```

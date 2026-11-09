@@ -16,6 +16,7 @@ __pycache__/
 env/
 venv/
 .venv/
+.venv*/
 .virtualenv/
 build/
 develop-eggs/
@@ -43,6 +44,8 @@ pip-log.txt
 pip-delete-this-directory.txt
 Pipfile.lock
 Pipfile
+# uv lock file — not used. If adopted, review release workflows accordingly.
+uv.lock
 
 # Unit test / coverage reports
 htmlcov/
@@ -75,7 +78,24 @@ target/
 
 junit/
 
-
 # django example static files
-example/django_example/admin/
-example/django_example/debug_toolbar/
+tests_functional/django_example/admin/
+tests_functional/django_example/debug_toolbar/
+
+# Vendor_src exists only during build process
+dynaconf/vendor_src/
+dynaconf/vendor/source
+
+# asdf (version manager)
+.tool-versions
+
+.DS_Store
+
+.helix
+
+# pyenv
+.python-version
+
+*.dat
+tmp*
+*.tsv
